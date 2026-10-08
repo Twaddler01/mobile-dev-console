@@ -1,0 +1,22 @@
+Personal notes
+
+/notes/
+
+Environment secrets
+
+.env
+.env.*
+
+Dependencies
+
+node_modules/
+
+OS files
+
+.DS_Store
+Thumbs.db
+
+Editor files
+
+.vscode/
+.idea/

@@ -1,17 +1,29 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>mobile-dev-console</title>
+        <link rel="stylesheet" href="./console.css" />
+    </head>
 
-<head>
-    <title>mobile-dev-console</title>
-    <link rel="stylesheet" href="console.css">
-</head>
+    <body>
+        hello boi
+        <div id="productionErrorLog" style="display: none"></div>
+        <div id="consoleLog"></div>
 
-<body>
+        <!-- Must load before the console -->
+        <script src="./errorBootstrap.js"></script>
 
-<div id="productionErrorLog"></div>
-<div id="consoleLog"></div>
+        <!-- Import the console in a catchable way -->
+        <script type="module">
+            try {
+                const { default: Console } = await import("./Console.js");
 
-<script src="./console.js" type="module"></script>
-
-</body>
+                new Console();
+            } catch (error) {
+                window.showFatalError("Console Startup Failed", error);
+            }
+        </script>
+    </body>
 </html>

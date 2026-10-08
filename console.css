@@ -1,11 +1,12 @@
-html, body {
+html,
+body {
     margin: 0;
     padding: 0;
     width: 100%;
     height: 100%;
     overflow: hidden;
 }
-        
+
 #consoleLog {
     position: fixed;
     left: 0;
@@ -112,4 +113,62 @@ html, body {
 #js-console .table td:first-child {
     font-weight: bold;
     white-space: nowrap;
+}
+
+.console-copy {
+    float: right;
+    margin-left: 8px;
+    padding: 2px 6px;
+    font-size: 0.4em;
+    cursor: pointer;
+}
+
+/* ==========================================
+   COLLAPSIBLE ERROR
+   ========================================== */
+
+.error-entry {
+    padding: 4px 0;
+}
+
+.error-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.error-arrow {
+    flex-shrink: 0;
+    font-size: 11px;
+}
+
+.error-message {
+    flex: 1 1 auto;
+    overflow-wrap: anywhere;
+}
+
+.error-source {
+    font-size: 0.85em;
+    opacity: 0.75;
+    overflow-wrap: anywhere;
+}
+
+.error-trace {
+    margin: 6px 0 4px 18px;
+    padding: 8px;
+    border-left: 2px solid currentColor;
+    background: rgb(128 128 128 / 8%);
+}
+
+.error-trace[hidden] {
+    display: none;
+}
+
+.error-trace-text {
+    margin: 0 0 8px;
+    font: inherit;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }

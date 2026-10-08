@@ -1,0 +1,115 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+        
+#consoleLog {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-height: 60vh;
+    z-index: 99999;
+    box-sizing: border-box;
+    pointer-events: auto;
+    overflow: hidden;
+}
+
+#consoleLog.collapsed {
+    max-height: 40px;
+}
+
+#consoleLog .console-body {
+    max-height: calc(60vh - 40px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+#consoleLog.collapsed .console-body {
+    display: none;
+}
+
+#consoleLog .console-header {
+    height: 40px;
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    padding: 0 8px;
+    background: #222;
+    color: white;
+    font-family: Arial, sans-serif;
+    font-size: 16px;
+}
+
+#consoleLog .console-header button {
+    margin-left: 6px;
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid #666;
+    border-radius: 4px;
+    background: #444;
+    color: white;
+    font-size: 14px;
+}
+
+#consoleLog .console-title {
+    margin-right: auto;
+}
+
+#js-console .group {
+    background: #222;
+    color: #fff;
+    font-weight: bold;
+    border-left: 3px solid #888;
+}
+
+#js-console .group-header {
+    padding: 3px 4px;
+    cursor: pointer;
+    user-select: none;
+    font-weight: bold;
+}
+
+#js-console .group-header:hover {
+    background-color: #444;
+}
+
+#js-console .group-arrow {
+    display: inline-block;
+    width: 1em;
+}
+
+#js-console .group-content {
+    display: block;
+}
+
+#js-console .group.collapsed .group-content {
+    display: none;
+}
+
+#js-console .table {
+    background: #222;
+    color: white;
+    font-family: monospace;
+    padding: 4px;
+    overflow-x: auto;
+}
+
+#js-console .table table {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+#js-console .table td {
+    padding: 3px 8px;
+    border-bottom: 1px solid #555;
+    vertical-align: top;
+}
+
+#js-console .table td:first-child {
+    font-weight: bold;
+    white-space: nowrap;
+}

@@ -106,23 +106,12 @@ class TestEnvironment {
     }
 }
 
-const footerContent = document.createElement("footer");
-footerContent.innerHTML = `
-<style>
-body {
-    display: flex;
-    flex-direction: column;
-}
-</style>
-    <footer>
-        mobile-dev-console test environment...
-    </footer>
+const testEnvironmentText = document.createElement("div");
+testEnvironmentText.innerHTML = `
+<a href="javascript: test()"><p>
+mobile-dev-console test environment...
+</p></a>
 `;
-footerContent.style.cssText = `
-    background: #000;
-    color: #fff;
-    padding: 10px;
-`;
-document.body.appendChild(footerContent);
+document.body.appendChild(testEnvironmentText);
 
 const testEnvironment = new TestEnvironment();

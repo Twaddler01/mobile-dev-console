@@ -35,6 +35,7 @@ body {
     overflow: hidden;
     pointer-events: auto;
 
+
     background: #222;
     color: #eee;
     font-family: Arial, sans-serif;
@@ -489,4 +490,226 @@ body {
 #consoleLog.collapsed .console-tabs,
 #consoleLog.collapsed .console-content {
     display: none;
+}
+
+
+/* ==========================================
+   DOM INSPECTOR
+   Kept separate from Console so other inspection
+   adapters can be added without changing its UI.
+   ========================================== */
+
+#consoleInspectPanel {
+    background: #101010;
+    color: #ddd;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 11px;
+}
+
+#consoleLog .dom-inspector {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+#consoleLog .dom-inspector-toolbar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+    padding: 7px;
+    background: #202020;
+    border-bottom: 1px solid #383838;
+}
+
+#consoleLog .dom-inspector-button {
+    min-height: 30px;
+    padding: 0 8px;
+    border: 1px solid #484848;
+    border-radius: 4px;
+    background: #303030;
+    color: #ddd;
+    font: 600 10px Arial, sans-serif;
+    white-space: nowrap;
+    touch-action: manipulation;
+}
+
+#consoleLog .dom-inspector-button.active {
+    border-color: #33d6e8;
+    background: #12383d;
+    color: #8cf4ff;
+}
+
+#consoleLog .dom-inspector-status {
+    min-width: 0;
+    margin-left: auto;
+    overflow: hidden;
+    color: #999;
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#consoleLog .dom-inspector-workspace {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+#consoleLog .dom-tree-pane,
+#consoleLog .dom-details-pane {
+    display: flex;
+    flex: 1 1 50%;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+#consoleLog .dom-tree-pane {
+    border-bottom: 1px solid #414141;
+}
+
+#consoleLog .dom-pane-heading {
+    flex: 0 0 auto;
+    padding: 5px 8px;
+    background: #191919;
+    color: #888;
+    font: 700 9px Arial, sans-serif;
+    letter-spacing: .1em;
+}
+
+#consoleLog .dom-tree-scroll,
+#consoleLog .dom-details-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+#consoleLog .dom-tree-node {
+    min-width: max-content;
+}
+
+#consoleLog .dom-tree-row {
+    display: flex;
+    align-items: stretch;
+    min-height: 25px;
+    padding-right: 5px;
+}
+
+#consoleLog .dom-tree-toggle {
+    flex: 0 0 25px;
+    width: 25px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #999;
+    font: 13px monospace;
+    touch-action: manipulation;
+}
+
+#consoleLog .dom-tree-toggle.no-children {
+    color: #555;
+}
+
+#consoleLog .dom-tree-select {
+    min-height: 25px;
+    padding: 3px 5px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: #9cdcfe;
+    font: 11px/1.4 "SFMono-Regular", Consolas, monospace;
+    text-align: left;
+    white-space: pre;
+    touch-action: manipulation;
+}
+
+#consoleLog .dom-tree-select.selected {
+    background: #23424b;
+    color: #fff;
+}
+
+#consoleLog .dom-tree-children {
+    padding-left: 13px;
+    border-left: 1px solid #292929;
+    margin-left: 11px;
+}
+
+#consoleLog .dom-tree-children[hidden] {
+    display: none;
+}
+
+#consoleLog .dom-inspector-limit,
+#consoleLog .dom-inspector-empty {
+    padding: 10px;
+    color: #888;
+    font: 11px/1.5 Arial, sans-serif;
+}
+
+#consoleLog .dom-detail-section {
+    padding: 7px 9px;
+    border-bottom: 1px solid #292929;
+}
+
+#consoleLog .dom-detail-section h4 {
+    margin: 0 0 6px;
+    color: #79c0ff;
+    font: 700 9px Arial, sans-serif;
+    letter-spacing: .08em;
+}
+
+#consoleLog .dom-detail-section dl {
+    display: grid;
+    grid-template-columns: minmax(75px, 34%) minmax(0, 1fr);
+    gap: 4px 8px;
+    margin: 0;
+}
+
+#consoleLog .dom-detail-section dt {
+    color: #999;
+    overflow-wrap: anywhere;
+}
+
+#consoleLog .dom-detail-section dd {
+    min-width: 0;
+    margin: 0;
+    color: #ddd;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.dom-inspector-highlight {
+    position: fixed;
+    z-index: 99998;
+    pointer-events: none;
+    border: 2px solid #33e6ff;
+    background: rgba(51, 230, 255, .12);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .8), 0 0 12px rgba(51, 230, 255, .35);
+}
+
+.dom-inspector-picking,
+.dom-inspector-picking * {
+    cursor: crosshair !important;
+}
+
+@media (min-width: 700px) {
+    #consoleLog .dom-inspector-workspace {
+        flex-direction: row;
+    }
+
+    #consoleLog .dom-tree-pane,
+    #consoleLog .dom-details-pane {
+        flex-basis: 50%;
+    }
+
+    #consoleLog .dom-tree-pane {
+        border-right: 1px solid #414141;
+        border-bottom: 0;
+    }
 }

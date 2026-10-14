@@ -1,5 +1,6 @@
 import ConsoleOutput from "./ConsoleOutput.js";
 import { icon } from "./icons.js";
+import DOMInspector from "./DOMInspector.js";
 
 export default class Console {
     constructor() {
@@ -22,6 +23,11 @@ export default class Console {
             this.element.querySelector("#js-console"),
             this.options
         );
+
+        this.inspector = new DOMInspector({
+            panel: this.element.querySelector("#consoleInspectPanel"),
+            consoleElement: this.element
+        });
 
         this.bindAutoScroll();
         this.bindEvents();
@@ -47,9 +53,18 @@ export default class Console {
             return;
         }
 
-        // Watch for entries added by ConsoleOutput, including grouped logs
-        // and tables. MutationObserver runs after the DOM has been updated.
-        this.logObserver = new MutationObserver(() => {
+        // Watch only direct children of the log root. Expanding or collapsing
+        // an existing group can change descendants, but must not trigger scrolling.
+        // A newly appended top-level entry is the only event that auto-scrolls.
+        this.logObserver = new MutationObserver((mutations) => {
+            const hasNewEntry = mutations.some((mutation) =>
+                mutation.type === "childList" && mutation.addedNodes.length > 0
+            );
+
+            if (!hasNewEntry) {
+                return;
+            }
+
             // Scroll only the bounded log-output viewport, never the page.
             this.outputScroll.scrollTo({
                 top: this.outputScroll.scrollHeight,
@@ -59,7 +74,7 @@ export default class Console {
 
         this.logObserver.observe(logElement, {
             childList: true,
-            subtree: true
+            subtree: false
         });
     }
 
@@ -143,10 +158,7 @@ export default class Console {
                     class="console-panel"
                     data-panel="inspect" role="tabpanel"
                     aria-labelledby="consoleTabInspect" hidden>
-                    <div class="console-placeholder">
-                        <strong>INSPECT</strong>
-                        <p>Live state inspection tools coming soon.</p>
-                    </div>
+                    <!-- DOMInspector owns this panel; adapters can be added later. -->
                 </section>
 
                 <section id="consoleTestsPanel"

@@ -7,7 +7,8 @@ export default class Console {
         this.options = {
             captureConsole: true,
             mirrorToNative: false,
-            showCopyButtons: false
+            showCopyButtons: false,
+            allowDragOutsideBounds: true
         };
 
         if (!this.element) {
@@ -20,7 +21,6 @@ export default class Console {
             document.getElementById("js-console"),
             this.options
         );
-        9;
 
         this.bindEvents();
 
@@ -51,6 +51,10 @@ export default class Console {
                 Reload
             </button>
 
+            <button id="consolePosition">
+                Undock
+            </button>
+            
             <button id="consoleToggle">
                 Hide
             </button>
@@ -137,6 +141,8 @@ export default class Console {
         this.clearButton = this.element.querySelector("#consoleClear");
 
         this.refreshButton = this.element.querySelector("#consoleRefresh");
+
+        this.positionButton = this.element.querySelector("#consolePosition");
 
         this.toggleButton = this.element.querySelector("#consoleToggle");
     }
@@ -226,6 +232,14 @@ export default class Console {
             location.reload();
         };
 
+        this.positionButton.onclick = () => {
+            if (this.isDocked) {
+                this.undock();
+            } else {
+                this.dock();
+            }
+        };
+
         this.bindDragging();
     }
 
@@ -234,11 +248,19 @@ export default class Console {
     // ==========================================
 
     bindDragging() {
+        this.isDocked = true;
         this.isDragging = false;
+
         this.dragOffsetX = 0;
         this.dragOffsetY = 0;
 
         this.header.addEventListener("pointerdown", event => {
+            // Docked consoles cannot be dragged.
+            if (this.isDocked) {
+                return;
+            }
+
+            // Buttons must remain clickable.
             if (event.target.closest("button")) {
                 return;
             }
@@ -248,21 +270,28 @@ export default class Console {
             const rect = this.element.getBoundingClientRect();
 
             this.dragOffsetX = event.clientX - rect.left;
-
             this.dragOffsetY = event.clientY - rect.top;
 
             event.preventDefault();
-            event.stopPropagation();
         });
 
         document.addEventListener("pointermove", event => {
-            if (!this.isDragging) {
+            if (!this.isDragging || this.isDocked) {
                 return;
             }
 
-            const x = event.clientX - this.dragOffsetX;
+            let x = event.clientX - this.dragOffsetX;
+            let y = event.clientY - this.dragOffsetY;
 
-            const y = event.clientY - this.dragOffsetY;
+            if (!this.options.allowDragOutsideBounds) {
+                const rect = this.element.getBoundingClientRect();
+
+                const maxX = Math.max(0, window.innerWidth - rect.width);
+                const maxY = Math.max(0, window.innerHeight - rect.height);
+
+                x = Math.min(maxX, Math.max(0, x));
+                y = Math.min(maxY, Math.max(0, y));
+            }
 
             this.element.style.left = `${x}px`;
             this.element.style.top = `${y}px`;
@@ -279,6 +308,40 @@ export default class Console {
         document.addEventListener("pointercancel", () => {
             this.isDragging = false;
         });
+    }
+
+    undock() {
+        if (!this.isDocked) {
+            return;
+        }
+
+        // Capture the current docked position before changing CSS.
+        const rect = this.element.getBoundingClientRect();
+
+        this.element.style.left = `${rect.left}px`;
+        this.element.style.top = `${rect.top}px`;
+        this.element.style.right = "auto";
+        this.element.style.bottom = "auto";
+
+        this.isDocked = false;
+        this.positionButton.textContent = "Dock";
+    }
+
+    dock() {
+        if (this.isDocked) {
+            return;
+        }
+
+        this.isDragging = false;
+        this.isDocked = true;
+
+        // Clear free-position coordinates and restore CSS docking.
+        this.element.style.left = "0px";
+        this.element.style.top = "auto";
+        this.element.style.right = "0px";
+        this.element.style.bottom = "0px";
+
+        this.positionButton.textContent = "Undock";
     }
 
     // ==========================================

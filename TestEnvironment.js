@@ -1,22 +1,14 @@
-export default class TestEnvironment {
+class TestEnvironment {
     constructor() {
-        //this.create();
-        //this.create2();
-        this.create3();
+        this.test();
+        this.test2();
+        this.test3();
 
-        devConsole.error(new Error('Test error'));
-        //devConsole.testEnvironment.testUncaughtError();
-        //devConsole.testEnvironment.testUnhandledRejection();
-        //devConsole.testEnvironment.testFailedResource();
+        this.testUncaughtError();
+        this.testUnhandledRejection();
 
-    }
-
-    create3() {
-        devConsole.group("Error handling tests");
-
-        devConsole.log("Run individual error tests separately.");
-
-        devConsole.groupEnd();
+        // Test a live error
+        // this.testFailedResource();
     }
 
     // ==========================================
@@ -27,7 +19,7 @@ export default class TestEnvironment {
         try {
             throw new Error("Simulated manual error");
         } catch (error) {
-            devConsole.error(error);
+            console.error(error);
         }
     }
 
@@ -46,9 +38,7 @@ export default class TestEnvironment {
     // ==========================================
 
     testUnhandledRejection() {
-        Promise.reject(
-            new Error("Simulated unhandled rejection")
-        );
+        Promise.reject(new Error("Simulated unhandled rejection"));
     }
 
     // ==========================================
@@ -56,53 +46,83 @@ export default class TestEnvironment {
     // ==========================================
 
     testFailedResource() {
-        const script = document.createElement("script");
+        const script = document.testElement("script");
 
         script.src = "./missing-test-file.js";
 
         document.head.appendChild(script);
     }
 
-    create2() {
-        devConsole.groupCollapsed("Test run #1");
+    test() {
+        console.log("Hello world");
+        console.warn("Warning test");
+        console.error("Error test");
 
-        devConsole.log("Starting tests");
+        console.group("Layout tests");
+        console.log("First test");
+        console.log("Second test");
+        console.groupEnd();
 
-        devConsole.group("Layout tests");
-
-        devConsole.log("First test");
-        devConsole.log("Second test");
-
-        devConsole.table({
+        console.table({
             width: 800,
             height: 600,
             columns: 2
         });
-
-        devConsole.groupCollapsed("Nested test");
-
-        devConsole.warn("Nested warning");
-        devConsole.error("Nested error");
-
-        devConsole.groupEnd();
-        devConsole.groupEnd();
-        devConsole.groupEnd();
     }
 
-    create() {
-        devConsole.log("Hello world");
-        devConsole.warn("Warning test");
-        devConsole.error("Error test");
+    test2() {
+        console.groupCollapsed("Test groupCollapsed");
 
-        devConsole.group("Layout tests");
-        devConsole.log("First test");
-        devConsole.log("Second test");
-        devConsole.groupEnd();
+        console.log("Starting tests");
 
-        devConsole.table({
+        console.group("Test group");
+
+        console.log("First log test");
+        console.log("Second log test");
+
+        console.table({
+            title: "test table",
             width: 800,
             height: 600,
             columns: 2
         });
+
+        console.groupCollapsed("Nested test");
+
+        console.warn("Nested warning");
+        console.error("Nested error");
+
+        console.groupEnd();
+        console.groupEnd();
+        console.groupEnd();
+    }
+
+    test3() {
+        console.group("Error handling tests");
+
+        console.log("Run individual error tests separately.");
+
+        console.groupEnd();
     }
 }
+
+const footerContent = document.createElement("footer");
+footerContent.innerHTML = `
+<style>
+body {
+    display: flex;
+    flex-direction: column;
+}
+</style>
+    <footer>
+        mobile-dev-console test environment...
+    </footer>
+`;
+footerContent.style.cssText = `
+    background: #000;
+    color: #fff;
+    padding: 10px;
+`;
+document.body.appendChild(footerContent);
+
+const testEnvironment = new TestEnvironment();

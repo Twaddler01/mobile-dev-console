@@ -1,7 +1,12 @@
 export default class ConsoleOutput {
-    constructor(container) {
+    constructor(container, options = {}) {
         this.container = container;
         this.groupStack = [];
+
+        this.options = {
+            showCopyButtons: false,
+            ...options
+        };
     }
 
     // ==========================================
@@ -21,7 +26,7 @@ export default class ConsoleOutput {
             this.renderError(items[0]);
             return;
         }
-    
+
         this.render("error", items);
     }
 
@@ -125,52 +130,123 @@ export default class ConsoleOutput {
 
         const entries = Object.entries(data);
 
-        const rows = entries.map(([key, value]) => {
-            let rendered;
+        if (entries.length === 0) {
+            this.log("(empty table)");
+            return;
+        }
 
-            try {
-                rendered =
-                    value !== null && typeof value === "object"
-                        ? JSON.stringify(value, null, 2)
-                        : String(value);
-            } catch {
-                rendered = "[unreadable]";
+        // Convert each entry into a row with a consistent shape.
+        const rows = entries.map(([index, value]) => {
+            if (value !== null && typeof value === "object") {
+                const cells = {};
+
+                for (const key of Object.keys(value)) {
+                    try {
+                        cells[key] = value[key];
+                    } catch {
+                        cells[key] = "[unreadable]";
+                    }
+                }
+
+                return { index, cells };
             }
 
-            const row = document.createElement("tr");
-            const keyCell = document.createElement("td");
-            const valueCell = document.createElement("td");
-
-            keyCell.textContent = key;
-            valueCell.textContent = rendered;
-
-            row.append(keyCell, valueCell);
-
-            return row;
+            return {
+                index,
+                cells: { Value: value }
+            };
         });
 
-        const table = document.createElement("table");
-        const body = document.createElement("tbody");
+        // Collect all columns across every row.
+        const columns = [];
 
-        body.append(...rows);
-        table.appendChild(body);
+        for (const row of rows) {
+            for (const key of Object.keys(row.cells)) {
+                if (!columns.includes(key)) {
+                    columns.push(key);
+                }
+            }
+        }
+
+        const table = document.createElement("table");
+
+        // --------------------------------------
+        // HEADER
+        // --------------------------------------
+
+        const thead = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+
+        const indexHeader = document.createElement("th");
+        indexHeader.textContent = "(index)";
+        headerRow.appendChild(indexHeader);
+
+        for (const column of columns) {
+            const th = document.createElement("th");
+            th.textContent = column;
+            headerRow.appendChild(th);
+        }
+
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        // --------------------------------------
+        // BODY
+        // --------------------------------------
+
+        const tbody = document.createElement("tbody");
+
+        for (const row of rows) {
+            const tr = document.createElement("tr");
+
+            const indexCell = document.createElement("td");
+            indexCell.textContent = row.index;
+            tr.appendChild(indexCell);
+
+            for (const column of columns) {
+                const td = document.createElement("td");
+                const value = row.cells[column];
+
+                td.textContent =
+                    value === undefined && !(column in row.cells)
+                        ? ""
+                        : this.toPlainText(value);
+
+                tr.appendChild(td);
+            }
+
+            tbody.appendChild(tr);
+        }
+
+        table.appendChild(tbody);
+
+        // --------------------------------------
+        // WRAPPER AND COPY TEXT
+        // --------------------------------------
 
         const wrapper = document.createElement("div");
         wrapper.className = "table";
 
-        // Plain-text representation, independent of the UI.
-        wrapper.dataset.copyText = entries
-            .map(([key, value]) => {
-                return `${key}: ${this.toPlainText(value)}`;
-            })
-            .join("\n");
+        wrapper.dataset.copyText = [
+            ["(index)", ...columns].join("\t"),
+            ...rows.map(row =>
+                [
+                    row.index,
+                    ...columns.map(column =>
+                        column in row.cells
+                            ? this.toPlainText(row.cells[column])
+                            : ""
+                    )
+                ].join("\t")
+            )
+        ].join("\n");
 
         wrapper.dataset.copySource = this.getSourceLocation() ?? "";
 
         wrapper.appendChild(table);
 
         wrapper.appendChild(
-            this.createCopyButton(() => wrapper.dataset.copyText)
+            this.createCopyButton(() => this.getCopyText(wrapper))
         );
 
         this.append(wrapper);
@@ -290,7 +366,7 @@ export default class ConsoleOutput {
     // ==========================================
 
     renderError(error) {
-        const source = this.getSourceLocation();
+        const source = this.getSourceLocation(error);
 
         const message = `${error.name}: ${error.message}`;
 
@@ -461,6 +537,10 @@ export default class ConsoleOutput {
     }
 
     createCopyButton(getText) {
+        if (!this.options.showCopyButtons) {
+            return document.createDocumentFragment();
+        }
+
         const button = document.createElement("button");
 
         button.className = "console-copy";
@@ -469,50 +549,78 @@ export default class ConsoleOutput {
 
         button.addEventListener("click", async event => {
             event.stopPropagation();
-
             await this.copyText(getText());
         });
 
         return button;
     }
 
-    getSourceLocation() {
-        const stack = new Error().stack;
+    getSourceLocation(error = null) {
+        const stack = error?.stack || new Error().stack;
 
         if (!stack) {
             return null;
         }
 
+        const internalFiles = [
+            "ConsoleOutput.js",
+            "Console.js",
+            "errorBootstrap.js"
+        ];
+
         const frames = stack.split("\n").slice(1);
 
-        for (const frame of frames) {
-            if (
-                frame.includes("ConsoleOutput.js") ||
-                frame.includes("Console.js")
-            ) {
-                continue;
-            }
+        for (const rawFrame of frames) {
+            const frame = rawFrame.trim();
+
+            let functionName = "";
+            let url = "";
+            let line = "";
+            let column = "";
 
             // Chrome / Chromium / Android WebView:
-            // at functionName (https://site/file.js:12:5)
-            // at https://site/file.js:12:5
-            let match = frame.match(/(?:\(|at\s+)(.*?):(\d+):(\d+)\)?$/);
+            // at createLoopTest (http://localhost/file.js:471:9)
+            let match = frame.match(/^at\s+(.+?)\s+\((.+):(\d+):(\d+)\)$/);
 
-            // Firefox-style stack:
-            // functionName@https://site/file.js:12:5
-            if (!match) {
-                match = frame.match(/@(.*?):(\d+):(\d+)$/);
+            if (match) {
+                functionName = match[1];
+                url = match[2];
+                line = match[3];
+                column = match[4];
+            } else {
+                // Chrome anonymous or direct URL frame:
+                // at http://localhost/file.js:471:9
+                match = frame.match(/^at\s+(.+):(\d+):(\d+)$/);
+
+                if (match) {
+                    url = match[1];
+                    line = match[2];
+                    column = match[3];
+                } else {
+                    // Firefox:
+                    // createLoopTest@http://localhost/file.js:471:9
+                    match = frame.match(/^(.*?)@(.+):(\d+):(\d+)$/);
+
+                    if (!match) {
+                        continue;
+                    }
+
+                    functionName = match[1];
+                    url = match[2];
+                    line = match[3];
+                    column = match[4];
+                }
             }
 
-            if (!match) {
+            // Ignore frames belonging to the console infrastructure.
+            if (internalFiles.some(file => url.includes(file))) {
                 continue;
             }
 
-            const file = match[1].split("/").pop();
+            // Preserve the original URL and useful source coordinates.
+            const location = `${url}:${line}:${column}`;
 
-            const line = match[2];
-
-            return `${file}:${line}`;
+            return functionName ? `${functionName}@${location}` : location;
         }
 
         return null;

@@ -8,22 +8,35 @@
     </head>
 
     <body>
-        hello boi
-        <div id="productionErrorLog" style="display: none"></div>
+        <!-- Needed for console elements. -->
+        <div id="productionErrorLog"></div>
         <div id="consoleLog"></div>
 
-        <!-- Must load before the console -->
+        <!-- For TestEnvironment / your other scripts -->
+        <div id="main" style="flex: 1"></div>
+
+        <!-- Install error listeners first. -->
         <script src="./errorBootstrap.js"></script>
 
-        <!-- Import the console in a catchable way -->
+        <!-- Initialize the console before the application. -->
         <script type="module">
             try {
                 const { default: Console } = await import("./Console.js");
 
                 new Console();
+
+                // Only load the application after capture is installed.
+                // Your first module goes here, for example: await import("./main.js");
+                await import("./TestEnvironment.js");
             } catch (error) {
-                window.showFatalError("Console Startup Failed", error);
+                if (window.devConsole) {
+                    window.devConsole.error(error);
+                } else {
+                    window.showFatalError("Application Startup Failed", error);
+                }
             }
         </script>
+
+        <!-- Load your other dependencies here, before main.js imports the application. -->
     </body>
 </html>

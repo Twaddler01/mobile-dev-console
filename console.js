@@ -1,9 +1,14 @@
 import ConsoleOutput from "./ConsoleOutput.js";
-import TestEnvironment from "./TestEnvironment.js";
 
 export default class Console {
     constructor() {
         this.element = document.getElementById("consoleLog");
+
+        this.options = {
+            captureConsole: true,
+            mirrorToNative: false,
+            showCopyButtons: false
+        };
 
         if (!this.element) {
             throw new Error("Console: #consoleLog element was not found.");
@@ -11,14 +16,21 @@ export default class Console {
 
         this.createUI();
 
-        this.output = new ConsoleOutput(document.getElementById("js-console"));
+        this.output = new ConsoleOutput(
+            document.getElementById("js-console"),
+            this.options
+        );
+        9;
 
         this.bindEvents();
 
         // Public instance for application debugging.
         window.devConsole = this;
 
-        this.testEnvironment = new TestEnvironment();
+        // Take over console.log calls, etc verses devConsole()
+        if (this.options.captureConsole) {
+            this.captureNativeConsole();
+        }
     }
 
     // ==========================================
@@ -69,12 +81,15 @@ export default class Console {
             }
 
             #js-console .warn {
-                background: yellow;
+                background: #ff0;
                 color: black;
+                font-weight: bold;
             }
 
             #js-console .error {
-                background: red;
+                background: #d00;
+                color: #fff;
+                font-weight: bold;
             }
 
             #js-console .prefix {
@@ -82,6 +97,37 @@ export default class Console {
                 min-width: 8em;
                 margin-right: 2em;
                 opacity: 0.8;
+            }
+            #js-console .table {
+                overflow-x: auto;
+            }
+            
+            #js-console .table table {
+                color: #fff;
+                border-collapse: collapse;
+                width: max-content;
+                min-width: 100%;
+                font: inherit;
+            }
+            
+            #js-console .table th,
+            #js-console .table td {
+                padding: 4px 8px;
+                border: 1px solid #555;
+                text-align: left;
+                vertical-align: top;
+                white-space: pre-wrap;
+            }
+            
+            #js-console .table th {
+                background: #222;
+                font-weight: bold;
+            }
+            
+            #js-console .table td:first-child,
+            #js-console .table th:first-child {
+                color: #bbb;
+                white-space: nowrap;
             }
         </style>
     `;
@@ -93,6 +139,72 @@ export default class Console {
         this.refreshButton = this.element.querySelector("#consoleRefresh");
 
         this.toggleButton = this.element.querySelector("#consoleToggle");
+    }
+
+    // ==========================================
+    // NATIVE CONSOLE CAPTURE
+    // ==========================================
+
+    captureNativeConsole() {
+        if (this.nativeConsole) {
+            return;
+        }
+
+        const methods = [
+            "log",
+            "info",
+            "debug",
+            "warn",
+            "error",
+            "group",
+            "groupCollapsed",
+            "groupEnd",
+            "table"
+        ];
+
+        this.nativeConsole = {};
+
+        for (const method of methods) {
+            this.nativeConsole[method] = console[method].bind(console);
+        }
+
+        this.nativeConsole.clear = console.clear.bind(console);
+
+        for (const method of methods) {
+            console[method] = (...items) => {
+                // Optional browser-console output.
+                if (this.options.mirrorToNative) {
+                    this.nativeConsole[method](...items);
+                }
+
+                // Route to the custom console.
+                if (method === "info" || method === "debug") {
+                    this.output.log(...items);
+                } else {
+                    this.output[method](...items);
+                }
+            };
+        }
+
+        console.clear = () => {
+            this.output.clear();
+
+            if (this.options.mirrorToNative) {
+                this.nativeConsole.clear();
+            }
+        };
+    }
+
+    restoreNativeConsole() {
+        if (!this.nativeConsole) {
+            return;
+        }
+
+        for (const [method, original] of Object.entries(this.nativeConsole)) {
+            console[method] = original;
+        }
+
+        this.nativeConsole = null;
     }
 
     // ==========================================
@@ -203,5 +315,19 @@ export default class Console {
 
     clear() {
         this.output.clear();
+    }
+
+    checkConsoleCapture() {
+        const methods = ["log", "info", "debug", "warn", "error"];
+
+        for (const method of methods) {
+            const current = console[method];
+            const original = this.nativeConsole?.[method];
+
+            this.nativeConsole?.log(
+                `[Capture Check] ${method}:`,
+                current === original ? "ORIGINAL (NOT CAPTURED)" : "REPLACED"
+            );
+        }
     }
 }

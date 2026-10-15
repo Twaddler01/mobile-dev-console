@@ -916,6 +916,18 @@ body {
     -webkit-overflow-scrolling: touch;
 }
 
+#consoleLog .console-settings-category {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+}
+
+#consoleLog .console-settings-category + .console-settings-category {
+    border-top: 1px solid #383838;
+    margin-top: 8px;
+    padding-top: 8px;
+}
+
 #consoleLog .console-settings-heading {
     padding: 14px 12px;
     background: #202020;

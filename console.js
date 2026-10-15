@@ -11,7 +11,8 @@ export default class Console {
             captureConsole: settings.captureConsole ?? true,
             mirrorToNative: settings.mirrorToNative ?? false,
             showCopyButtons: settings.showCopyButtons ?? false,
-            allowDragOutsideBounds: settings.allowDragOutsideBounds ?? true
+            allowDragOutsideBounds: settings.allowDragOutsideBounds ?? true,
+            logTestOutput: settings.logTestOutput ?? true
         };
 
         if (!this.element) {
@@ -235,6 +236,23 @@ export default class Console {
                                 </small>
                             </span>
                         </label>
+
+                        <div class="console-settings-category">
+                            <div class="console-settings-heading">
+                                <strong>TESTS PREFERENCES</strong>
+                                <p>Configure test runner logging behavior.</p>
+                            </div>
+                        
+                            <label class="console-setting">
+                                <input type="checkbox" id="settingLogTestOutput">
+                                <span class="console-setting-info">
+                                    <strong>Log test output</strong>
+                                    <small>
+                                        Show test results and completion messages in the DEV TOOLS log.
+                                    </small>
+                                </span>
+                            </label>
+                        </div>
                     </div>
                 </section>
 
@@ -406,6 +424,9 @@ export default class Console {
             ),
             allowDragOutsideBounds: this.element.querySelector(
                 "#settingAllowDragOutsideBounds"
+            ),
+            logTestOutput: this.element.querySelector(
+                "#settingLogTestOutput"
             )
         };
 

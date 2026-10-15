@@ -17,7 +17,9 @@ export default class TestRegistry {
         this.validateSuite(definition);
 
         if (this.suites.has(definition.id)) {
-            throw new Error(`TestRegistry: suite "${definition.id}" is already registered.`);
+            throw new Error(
+                `TestRegistry: suite "${definition.id}" is already registered.`
+            );
         }
 
         // Keep a normalized copy so external mutation cannot silently change the UI.
@@ -65,43 +67,61 @@ export default class TestRegistry {
 
     validateSuite(suite) {
         if (!suite || typeof suite !== "object") {
-            throw new TypeError("TestRegistry: registerSuite() expects a suite object.");
+            throw new TypeError(
+                "TestRegistry: registerSuite() expects a suite object."
+            );
         }
 
         if (typeof suite.id !== "string" || !suite.id.trim()) {
-            throw new TypeError("TestRegistry: suite.id must be a non-empty string.");
+            throw new TypeError(
+                "TestRegistry: suite.id must be a non-empty string."
+            );
         }
 
         if (typeof suite.name !== "string" || !suite.name.trim()) {
-            throw new TypeError("TestRegistry: suite.name must be a non-empty string.");
+            throw new TypeError(
+                "TestRegistry: suite.name must be a non-empty string."
+            );
         }
 
         if (!Array.isArray(suite.actions)) {
-            throw new TypeError("TestRegistry: suite.actions must be an array.");
+            throw new TypeError(
+                "TestRegistry: suite.actions must be an array."
+            );
         }
 
         const actionIds = new Set();
 
         for (const action of suite.actions) {
             if (!action || typeof action !== "object") {
-                throw new TypeError(`TestRegistry: invalid action in suite "${suite.id}".`);
+                throw new TypeError(
+                    `TestRegistry: invalid action in suite "${suite.id}".`
+                );
             }
 
             if (typeof action.id !== "string" || !action.id.trim()) {
-                throw new TypeError(`TestRegistry: every action in "${suite.id}" needs an id.`);
+                throw new TypeError(
+                    `TestRegistry: every action in "${suite.id}" needs an id.`
+                );
             }
 
             if (actionIds.has(action.id)) {
-                throw new Error(`TestRegistry: duplicate action id "${action.id}" in suite "${suite.id}".`);
+                throw new Error(
+                    `TestRegistry: duplicate action id "${action.id}" in suite "${suite.id}".`
+                );
             }
             actionIds.add(action.id);
 
             if (typeof action.label !== "string" || !action.label.trim()) {
-                throw new TypeError(`TestRegistry: action "${action.id}" needs a label.`);
+                throw new TypeError(
+                    `TestRegistry: action "${action.id}" needs a label.`
+                );
             }
 
             if (typeof action.run !== "function") {
-                throw new TypeError(`TestRegistry: action "${action.id}" needs a run() function.`);
+                throw new TypeError(
+                    `TestRegistry: action "${action.id}" needs a run() function.`
+                );
             }
         }
     }
@@ -124,10 +144,17 @@ export default class TestRegistry {
                 action: { id: action.id, label: action.label }
             });
 
-            if (result !== undefined) {
-                this.devConsole.log(`[TESTS] ${suite.name} → ${action.label}`, result);
-            } else {
-                this.devConsole.log(`[TESTS] Completed: ${suite.name} → ${action.label}`);
+            if (this.devConsole.settings.logTestOutput) {
+                if (result !== undefined) {
+                    this.devConsole.log(
+                        `[TESTS] ${suite.name} → ${action.label}`,
+                        result
+                    );
+                } else {
+                    this.devConsole.log(
+                        `[TESTS] Completed: ${suite.name} → ${action.label}`
+                    );
+                }
             }
 
             status.textContent = `Completed: ${action.label}`;
@@ -167,13 +194,16 @@ export default class TestRegistry {
         const status = document.createElement("div");
         status.className = "console-tests-status";
         status.setAttribute("role", "status");
-        status.textContent = this.suites.size ? "Choose an action to run." : "No project tools registered yet.";
+        status.textContent = this.suites.size
+            ? "Choose an action to run."
+            : "No project tools registered yet.";
         root.appendChild(status);
 
         if (this.suites.size === 0) {
             const empty = document.createElement("div");
             empty.className = "console-tests-empty";
-            empty.textContent = "Register a suite from an integration module to make its tools available here.";
+            empty.textContent =
+                "Register a suite from an integration module to make its tools available here.";
             root.appendChild(empty);
         }
 
@@ -232,6 +262,5 @@ export default class TestRegistry {
         }
 
         this.panel.replaceChildren(root);
-        
     }
 }

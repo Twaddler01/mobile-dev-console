@@ -232,5 +232,6 @@ export default class TestRegistry {
         }
 
         this.panel.replaceChildren(root);
+        
     }
 }

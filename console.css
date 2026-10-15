@@ -744,10 +744,15 @@ body {
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;
+
+    height: 100%;
     min-height: 0;
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
+
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
@@ -878,6 +883,21 @@ body {
     background: #3c321b;
     color: #ffe09a;
 }
+
+
+/* Let the test list grow to its natural content height.
+   The .console-tests root remains the scroll container. */
+#consoleLog .console-tests-status,
+#consoleLog .console-tests-empty,
+#consoleLog .console-tests-suite {
+    flex: 0 0 auto;
+}
+
+/* Keep each action row at its intended height. */
+#consoleLog .console-tests-action {
+    flex: 0 0 auto;
+}
+
 
 /* ==========================================
    SETTINGS

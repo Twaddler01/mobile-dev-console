@@ -4,12 +4,23 @@
  */
 const devConsole = window.devConsole;
 
+function customRun() {
+    console.log("TEST: native console");
+    window.devConsole.log("TEST: direct devConsole");
+}
+
 if (devConsole?.tests) {
     devConsole.tests.registerSuite({
         id: "demo-project",
         name: "Demo Project",
         description: "Example actions showing how another project integrates.",
         actions: [
+            {
+                id: "custom",
+                label: "Run Custom",
+                description: "Console debugging.",
+                run: () => customRun()
+            },
             {
                 id: "sample-logs",
                 label: "Write Sample Logs",
@@ -38,7 +49,7 @@ if (devConsole?.tests) {
                     result: "Async action completed",
                     completedAt: new Date().toISOString()
                 })
-            }
+            },
         ]
     });
 } else {

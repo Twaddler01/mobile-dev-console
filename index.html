@@ -18,15 +18,24 @@
         <!-- Install error listeners first. -->
         <script src="./errorBootstrap.js"></script>
 
-        <!-- Initialize the console before the application. -->
+        <!-- Initialize the console before integrations and the application. -->
         <script type="module">
             try {
                 const { default: Console } = await import("./Console.js");
 
-                new Console();
+                new Console({
+                    captureConsole: true,
+                    mirrorToNative: false,
+                    showCopyButtons: false,
+                    allowDragOutsideBounds: true,
+                    showCopyButtons: false
+                });
 
-                // Only load the application after capture is installed.
-                // Your first module goes here, for example: await import("./main.js");
+                // Register example tools after the public console API exists.
+                await import("./DemoDebugSuite.js");
+
+                // Load the app only after console integrations are ready.
+                // Replace TestEnvironment.js with your application entry point as needed.
                 await import("./TestEnvironment.js");
             } catch (error) {
                 if (window.devConsole) {
@@ -36,7 +45,5 @@
                 }
             }
         </script>
-
-        <!-- Load your other dependencies here, before main.js imports the application. -->
     </body>
 </html>

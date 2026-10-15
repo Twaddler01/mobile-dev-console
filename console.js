@@ -1,16 +1,17 @@
 import ConsoleOutput from "./ConsoleOutput.js";
 import { icon } from "./icons.js";
 import DOMInspector from "./DOMInspector.js";
+import TestRegistry from "./TestRegistry.js";
 
 export default class Console {
-    constructor() {
+    constructor(settings = {}) {
         this.element = document.getElementById("consoleLog");
 
-        this.options = {
-            captureConsole: true,
-            mirrorToNative: false,
-            showCopyButtons: false,
-            allowDragOutsideBounds: true
+        this.settings = {
+            captureConsole: settings.captureConsole ?? true,
+            mirrorToNative: settings.mirrorToNative ?? false,
+            showCopyButtons: settings.showCopyButtons ?? false,
+            allowDragOutsideBounds: settings.allowDragOutsideBounds ?? true
         };
 
         if (!this.element) {
@@ -21,13 +22,25 @@ export default class Console {
 
         this.output = new ConsoleOutput(
             this.element.querySelector("#js-console"),
-            this.options
+            this.settings
         );
 
         this.inspector = new DOMInspector({
             panel: this.element.querySelector("#consoleInspectPanel"),
             consoleElement: this.element
         });
+
+        this.tests = new TestRegistry(
+            this,
+            this.element.querySelector("#consoleTestsPanel")
+        );
+
+        this.logElement = this.element.querySelector("#js-console");
+
+        this.logElement.classList.toggle(
+            "hide-copy-buttons",
+            !this.settings.showCopyButtons
+        );
 
         this.bindAutoScroll();
         this.bindEvents();
@@ -36,7 +49,7 @@ export default class Console {
         window.devConsole = this;
 
         // Capture console.log(), console.warn(), etc.
-        if (this.options.captureConsole) {
+        if (this.settings.captureConsole) {
             this.captureNativeConsole();
         }
     }
@@ -46,7 +59,9 @@ export default class Console {
     // ==========================================
 
     bindAutoScroll() {
-        this.outputScroll = this.element.querySelector(".console-output-scroll");
+        this.outputScroll = this.element.querySelector(
+            ".console-output-scroll"
+        );
         const logElement = this.element.querySelector("#js-console");
 
         if (!this.outputScroll || !logElement) {
@@ -56,9 +71,11 @@ export default class Console {
         // Watch only direct children of the log root. Expanding or collapsing
         // an existing group can change descendants, but must not trigger scrolling.
         // A newly appended top-level entry is the only event that auto-scrolls.
-        this.logObserver = new MutationObserver((mutations) => {
-            const hasNewEntry = mutations.some((mutation) =>
-                mutation.type === "childList" && mutation.addedNodes.length > 0
+        this.logObserver = new MutationObserver(mutations => {
+            const hasNewEntry = mutations.some(
+                mutation =>
+                    mutation.type === "childList" &&
+                    mutation.addedNodes.length > 0
             );
 
             if (!hasNewEntry) {
@@ -165,21 +182,62 @@ export default class Console {
                     class="console-panel"
                     data-panel="tests" role="tabpanel"
                     aria-labelledby="consoleTabTests" hidden>
-                    <div class="console-placeholder">
-                        <strong>TESTS</strong>
-                        <p>Reusable development tests coming soon.</p>
-                    </div>
+                    <!-- TestRegistry renders registered project suites here. -->
                 </section>
 
                 <section id="consoleSettingsPanel"
                     class="console-panel"
                     data-panel="settings" role="tabpanel"
                     aria-labelledby="consoleTabSettings" hidden>
-                    <div class="console-placeholder">
-                        <strong>SETTINGS</strong>
-                        <p>Console preferences coming soon.</p>
+                
+                    <div class="console-settings">
+                        <div class="console-settings-heading">
+                            <strong>CONSOLE PREFERENCES</strong>
+                            <p>Configure logging and developer tools behavior.</p>
+                        </div>
+                
+                        <label class="console-setting">
+                            <input type="checkbox" id="settingCaptureConsole">
+                            <span class="console-setting-info">
+                                <strong>Capture native console</strong>
+                                <small>
+                                    Redirect supported console methods into DEV TOOLS.
+                                </small>
+                            </span>
+                        </label>
+                
+                        <label class="console-setting">
+                            <input type="checkbox" id="settingMirrorToNative">
+                            <span class="console-setting-info">
+                                <strong>Mirror to native console</strong>
+                                <small>
+                                    Also send captured messages to the original browser console.
+                                </small>
+                            </span>
+                        </label>
+                
+                        <label class="console-setting">
+                            <input type="checkbox" id="settingShowCopyButtons">
+                            <span class="console-setting-info">
+                                <strong>Show copy buttons</strong>
+                                <small>
+                                    Add Copy controls to individual log entries and groups.
+                                </small>
+                            </span>
+                        </label>
+                
+                        <label class="console-setting">
+                            <input type="checkbox" id="settingAllowDragOutsideBounds">
+                            <span class="console-setting-info">
+                                <strong>Allow dragging outside bounds</strong>
+                                <small>
+                                    Let the undocked console move beyond screen edges.
+                                </small>
+                            </span>
+                        </label>
                     </div>
                 </section>
+
             </div>
         `;
 
@@ -223,7 +281,7 @@ export default class Console {
 
         for (const method of methods) {
             console[method] = (...items) => {
-                if (this.options.mirrorToNative) {
+                if (this.settings.mirrorToNative) {
                     this.nativeConsole[method](...items);
                 }
 
@@ -238,7 +296,7 @@ export default class Console {
         console.clear = () => {
             this.output.clear();
 
-            if (this.options.mirrorToNative) {
+            if (this.settings.mirrorToNative) {
                 this.nativeConsole.clear();
             }
         };
@@ -322,12 +380,69 @@ export default class Console {
         });
 
         this.bindTabs();
+        this.bindSettings();
         this.bindDragging();
 
         this.activeTab = "log";
         this.isDocked = true;
         this.updatePositionButton();
         this.updateToggleButton(false);
+    }
+
+    // ==========================================
+    // SETTINGS
+    // ==========================================
+
+    bindSettings() {
+        const controls = {
+            captureConsole: this.element.querySelector(
+                "#settingCaptureConsole"
+            ),
+            mirrorToNative: this.element.querySelector(
+                "#settingMirrorToNative"
+            ),
+            showCopyButtons: this.element.querySelector(
+                "#settingShowCopyButtons"
+            ),
+            allowDragOutsideBounds: this.element.querySelector(
+                "#settingAllowDragOutsideBounds"
+            )
+        };
+
+        // Initialize checkboxes from the current settings.
+        for (const [key, input] of Object.entries(controls)) {
+            input.checked = this.settings[key];
+
+            input.addEventListener("change", () => {
+                this.updateSetting(key, input.checked);
+            });
+        }
+    }
+
+    updateSetting(key, value) {
+        if (!(key in this.settings)) {
+            return;
+        }
+
+        this.settings[key] = value;
+
+        switch (key) {
+            case "captureConsole":
+                if (value) {
+                    this.captureNativeConsole();
+                } else {
+                    this.restoreNativeConsole();
+                }
+                break;
+
+            case "showCopyButtons":
+                this.logElement.classList.toggle("hide-copy-buttons", !value);
+                break;
+
+            // mirrorToNative is read for every captured message.
+            // allowDragOutsideBounds is read during every drag movement.
+            // Both therefore take effect immediately.
+        }
     }
 
     updatePositionButton() {
@@ -368,7 +483,10 @@ export default class Console {
         this.dragOffsetY = 0;
 
         this.dragHandle.addEventListener("pointerdown", event => {
-            if (this.isDocked || event.button !== 0 && event.pointerType === "mouse") {
+            if (
+                this.isDocked ||
+                (event.button !== 0 && event.pointerType === "mouse")
+            ) {
                 return;
             }
 
@@ -396,7 +514,7 @@ export default class Console {
             let x = event.clientX - this.dragOffsetX;
             let y = event.clientY - this.dragOffsetY;
 
-            if (!this.options.allowDragOutsideBounds) {
+            if (!this.settings.allowDragOutsideBounds) {
                 const rect = this.element.getBoundingClientRect();
                 const maxX = Math.max(0, window.innerWidth - rect.width);
                 const maxY = Math.max(0, window.innerHeight - rect.height);

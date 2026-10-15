@@ -239,7 +239,9 @@ body {
     background: #292929;
     color: #c7c7c7;
 
-    font: 600 10px/1 Arial, sans-serif;
+    font:
+        600 10px/1 Arial,
+        sans-serif;
     letter-spacing: 0.02em;
     white-space: nowrap;
     cursor: pointer;
@@ -286,7 +288,11 @@ body {
     padding: 5px 0 8px;
     background: #050505;
     color: #d4d4d4;
-    font: 12px/1.55 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font:
+        12px/1.55 "SFMono-Regular",
+        Consolas,
+        "Liberation Mono",
+        monospace;
 }
 
 #js-console > div {
@@ -491,7 +497,6 @@ body {
     display: none;
 }
 
-
 /* ==========================================
    DOM INSPECTOR
    Kept separate from Console so other inspection
@@ -530,7 +535,9 @@ body {
     border-radius: 4px;
     background: #303030;
     color: #ddd;
-    font: 600 10px Arial, sans-serif;
+    font:
+        600 10px Arial,
+        sans-serif;
     white-space: nowrap;
     touch-action: manipulation;
 }
@@ -577,8 +584,10 @@ body {
     padding: 5px 8px;
     background: #191919;
     color: #888;
-    font: 700 9px Arial, sans-serif;
-    letter-spacing: .1em;
+    font:
+        700 9px Arial,
+        sans-serif;
+    letter-spacing: 0.1em;
 }
 
 #consoleLog .dom-tree-scroll,
@@ -623,7 +632,10 @@ body {
     border-radius: 3px;
     background: transparent;
     color: #9cdcfe;
-    font: 11px/1.4 "SFMono-Regular", Consolas, monospace;
+    font:
+        11px/1.4 "SFMono-Regular",
+        Consolas,
+        monospace;
     text-align: left;
     white-space: pre;
     touch-action: manipulation;
@@ -648,7 +660,9 @@ body {
 #consoleLog .dom-inspector-empty {
     padding: 10px;
     color: #888;
-    font: 11px/1.5 Arial, sans-serif;
+    font:
+        11px/1.5 Arial,
+        sans-serif;
 }
 
 #consoleLog .dom-detail-section {
@@ -659,8 +673,10 @@ body {
 #consoleLog .dom-detail-section h4 {
     margin: 0 0 6px;
     color: #79c0ff;
-    font: 700 9px Arial, sans-serif;
-    letter-spacing: .08em;
+    font:
+        700 9px Arial,
+        sans-serif;
+    letter-spacing: 0.08em;
 }
 
 #consoleLog .dom-detail-section dl {
@@ -688,8 +704,10 @@ body {
     z-index: 99998;
     pointer-events: none;
     border: 2px solid #33e6ff;
-    background: rgba(51, 230, 255, .12);
-    box-shadow: 0 0 0 1px rgba(0, 0, 0, .8), 0 0 12px rgba(51, 230, 255, .35);
+    background: rgba(51, 230, 255, 0.12);
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.8),
+        0 0 12px rgba(51, 230, 255, 0.35);
 }
 
 .dom-inspector-picking,
@@ -711,4 +729,237 @@ body {
         border-right: 1px solid #414141;
         border-bottom: 0;
     }
+}
+
+/* ==========================================
+   PROJECT TEST / DEBUG REGISTRY
+   ========================================== */
+
+#consoleTestsPanel {
+    background: #101010;
+    color: #ddd;
+}
+
+#consoleLog .console-tests {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+#consoleLog .console-tests-heading {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    background: #202020;
+    border-bottom: 1px solid #383838;
+}
+
+#consoleLog .console-tests-heading strong {
+    color: #aaa;
+    font:
+        700 10px Arial,
+        sans-serif;
+    letter-spacing: 0.08em;
+}
+
+#consoleLog .console-tests-count {
+    margin-left: auto;
+    color: #777;
+    font: 10px monospace;
+}
+
+#consoleLog .console-tests-status {
+    padding: 8px 10px;
+    border-bottom: 1px solid #252525;
+    color: #79c0ff;
+    font: 10px/1.4 monospace;
+}
+
+#consoleLog .console-tests-empty {
+    padding: 14px 10px;
+    color: #888;
+    font:
+        12px/1.5 Arial,
+        sans-serif;
+}
+
+#consoleLog .console-tests-suite {
+    margin: 9px;
+    border: 1px solid #363636;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+#consoleLog .console-tests-suite-heading {
+    padding: 9px 10px;
+    background: #1c1c1c;
+    border-bottom: 1px solid #363636;
+}
+
+#consoleLog .console-tests-suite-heading strong {
+    color: #e6e6e6;
+    font:
+        700 12px Arial,
+        sans-serif;
+}
+
+#consoleLog .console-tests-suite-heading p {
+    margin: 4px 0 0;
+    color: #888;
+    font:
+        11px/1.4 Arial,
+        sans-serif;
+}
+
+#consoleLog .console-tests-action {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px;
+    border-bottom: 1px solid #292929;
+}
+
+#consoleLog .console-tests-action:last-child {
+    border-bottom: 0;
+}
+
+#consoleLog .console-tests-action-info {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+#consoleLog .console-tests-action-label {
+    color: #ddd;
+    font:
+        11px Arial,
+        sans-serif;
+}
+
+#consoleLog .console-tests-action-description {
+    color: #858585;
+    font:
+        10px/1.4 Arial,
+        sans-serif;
+}
+
+#consoleLog .console-tests-run {
+    flex: 0 0 auto;
+    min-width: 55px;
+    min-height: 30px;
+    padding: 0 9px;
+    border: 1px solid #426b76;
+    border-radius: 4px;
+    background: #19363d;
+    color: #a4edf7;
+    font:
+        700 10px Arial,
+        sans-serif;
+    touch-action: manipulation;
+}
+
+#consoleLog .console-tests-run:disabled {
+    opacity: 0.7;
+}
+
+#consoleLog .console-tests-run.running {
+    border-color: #8a7138;
+    background: #3c321b;
+    color: #ffe09a;
+}
+
+/* ==========================================
+   SETTINGS
+   ========================================== */
+
+#consoleSettingsPanel {
+    background: #101010;
+    color: #ddd;
+}
+
+#consoleLog .console-settings {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+#consoleLog .console-settings-heading {
+    padding: 14px 12px;
+    background: #202020;
+    border-bottom: 1px solid #383838;
+}
+
+#consoleLog .console-settings-heading strong {
+    color: #aaa;
+    font:
+        700 10px Arial,
+        sans-serif;
+    letter-spacing: 0.08em;
+}
+
+#consoleLog .console-settings-heading p {
+    margin: 6px 0 0;
+    color: #888;
+    font:
+        12px/1.5 Arial,
+        sans-serif;
+}
+
+#consoleLog .console-setting {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 12px;
+    border-bottom: 1px solid #292929;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+#consoleLog .console-setting input {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    margin: 1px 0 0;
+    accent-color: #3d5afe;
+    cursor: pointer;
+}
+
+#consoleLog .console-setting-info {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+}
+
+#consoleLog .console-setting-info strong {
+    color: #e6e6e6;
+    font:
+        600 13px Arial,
+        sans-serif;
+}
+
+#consoleLog .console-setting-info small {
+    color: #929292;
+    font:
+        12px/1.45 Arial,
+        sans-serif;
+}
+
+/* Existing log entries respond to the setting immediately. */
+#js-console.hide-copy-buttons .console-copy {
+    display: none;
 }

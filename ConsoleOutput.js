@@ -1,12 +1,9 @@
 export default class ConsoleOutput {
-    constructor(container, options = {}) {
+    constructor(container, settings = {}) {
         this.container = container;
         this.groupStack = [];
 
-        this.options = {
-            showCopyButtons: false,
-            ...options
-        };
+        this.settings = settings;
     }
 
     // ==========================================
@@ -537,10 +534,6 @@ export default class ConsoleOutput {
     }
 
     createCopyButton(getText) {
-        if (!this.options.showCopyButtons) {
-            return document.createDocumentFragment();
-        }
-
         const button = document.createElement("button");
 
         button.className = "console-copy";

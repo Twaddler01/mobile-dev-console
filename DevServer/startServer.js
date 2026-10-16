@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const DevServer = require("./DevServer");
 const ExcludeManager = require("./ExcludeManager");
+const { spawn } = require("child_process");
 
 const configDirectory = __dirname;
 
@@ -59,8 +60,36 @@ const server = new DevServer({
     excludeManager
 });
 
+const launchBrowser = fileConfig.launch_browser === "true";
+const browserPackage = fileConfig.browser_package || "org.mozilla.firefox";
+
+const port = Number.parseInt(fileConfig.port, 10) || 8080;
+const startPage = fileConfig.start_page || "/";
+const url = `http://127.0.0.1:${port}${startPage.startsWith("/") ? startPage : `/${startPage}`}`;
+
 server.start();
 
+if (launchBrowser) {
+    server.server.once("listening", () => {
+        console.log("[Launcher] Server is ready. Opening browser...");
+
+        const args = [
+            "start",
+            "-a", "android.intent.action.VIEW",
+            "-d", url
+        ];
+
+        if (browserPackage) {
+            args.push("-p", browserPackage);
+        }
+
+        const browser = spawn("am", args, { stdio: "inherit" });
+
+        browser.on("error", error => {
+            console.error("[Launcher] Could not open browser:", error.message);
+        });
+    });
+}
 
 let shuttingDown = false;
 
@@ -72,6 +101,7 @@ async function shutdown() {
 
     try {
         await server.stop();
+        process.exitCode = 0;
     } catch (error) {
         console.error("[DevServer] Shutdown error:", error);
         process.exitCode = 1;

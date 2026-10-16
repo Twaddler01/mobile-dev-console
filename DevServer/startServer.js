@@ -1,47 +1,82 @@
-const fs = require('fs');
-const path = require('path');
-const DevServer = require('./DevServer');
+const fs = require("fs");
+const path = require("path");
+const DevServer = require("./DevServer");
+const ExcludeManager = require("./ExcludeManager");
 
-function loadConfig(configPath = 'settings.config') {
-  const config = {};
-  try {
-    if (fs.existsSync(configPath)) {
-      const data = fs.readFileSync(configPath, 'utf8');
-      data.split(/\r?\n/).forEach(line => {
-        if (!line.trim() || line.trim().startsWith('#')) return;
-        const [key, ...valueParts] = line.split(':');
-        if (key && valueParts.length > 0) {
-          config[key.trim()] = valueParts.join(':').trim();
+const configDirectory = __dirname;
+
+function loadConfig(configPath) {
+    const config = {};
+
+    try {
+        if (!fs.existsSync(configPath)) {
+            console.warn(
+                `[Config] ${path.basename(configPath)} not found; using defaults.`
+            );
+            return config;
         }
-      });
+
+        const data = fs.readFileSync(configPath, "utf8");
+
+        for (const line of data.split(/\r?\n/)) {
+            const trimmed = line.trim();
+
+            if (!trimmed || trimmed.startsWith("#")) continue;
+
+            const separator = trimmed.indexOf(":");
+            if (separator === -1) continue;
+
+            const key = trimmed.slice(0, separator).trim();
+            const value = trimmed.slice(separator + 1).trim();
+
+            if (key) config[key] = value;
+        }
+    } catch (error) {
+        console.warn(`[Config] Could not read ${configPath}: ${error.message}`);
     }
-  } catch (err) {
-    console.warn('[Config] Could not read settings.config, using defaults.');
-  }
-  return config;
+
+    return config;
 }
 
-const fileConfig = loadConfig();
-const port = fileConfig.port ? parseInt(fileConfig.port, 10) : 3000;
-const directory = fileConfig.directory || process.cwd();
-const startPage = fileConfig.start_page || null;
-// Parse folder_listing boolean value ('true' string to actual boolean)
-const folderListing = fileConfig.folder_listing === 'true';
-const disableCache = fileConfig.disable_cache === 'true';
-const liveReload = fileConfig.live_reload === 'true';
+const fileConfig = loadConfig(path.join(configDirectory, "settings.config"));
+
+const directory = path.resolve(fileConfig.directory || process.cwd());
+
+const excludeManager = new ExcludeManager(directory, {
+    configPath: path.join(configDirectory, "exclude.config"),
+    excludeGit: fileConfig.exclude_git === "true"
+});
+
+excludeManager.load();
 
 const server = new DevServer({
-  port: port,
-  directory: path.resolve(directory),
-  startPage: startPage,
-  folderListing: folderListing,
-  disableCache: disableCache,
-  liveReload: liveReload
+    port: Number.parseInt(fileConfig.port, 10) || 8080,
+    directory,
+    startPage: fileConfig.start_page || null,
+    folderListing: fileConfig.folder_listing === "true",
+    disableCache: fileConfig.disable_cache !== "false",
+    liveReload: fileConfig.live_reload === "true",
+    excludeManager
 });
 
 server.start();
 
-process.on('SIGINT', () => {
-  console.log('\n[!] Shutting down dev server...');
-  server.stop(() => process.exit(0));
-});
+
+let shuttingDown = false;
+
+async function shutdown() {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    console.log("\n[!] Shutting down dev server...");
+
+    try {
+        await server.stop();
+    } catch (error) {
+        console.error("[DevServer] Shutdown error:", error);
+        process.exitCode = 1;
+    }
+}
+
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);

@@ -10,10 +10,12 @@ class DevServer {
         this.folderListing = options.folderListing || false;
         this.liveReload = options.liveReload || false;
         this.disableCache = options.disableCache !== false; // Defaults to true if omitted
+        this.excludeManager = options.excludeManager;
         this.server = null;
         this.wss = null;
         this.watcher = null;
-
+        this.reloadTimer = null;
+        
         this.mimeTypes = {
             ".html": "text/html",
             ".js": "application/javascript",
@@ -54,7 +56,17 @@ class DevServer {
                 res.setHeader("Expires", "0");
             }
 
-            let safeUrl = req.url.split("?")[0];
+            let safeUrl;
+
+            try {
+                safeUrl = decodeURIComponent(
+                    new URL(req.url, "http://localhost").pathname
+                );
+            } catch {
+                res.writeHead(400);
+                res.end("400 Bad Request");
+                return;
+            }
 
             if (safeUrl === "/" && !this.folderListing && this.startPage) {
                 res.writeHead(302, { Location: this.startPage });
@@ -62,19 +74,38 @@ class DevServer {
                 return;
             }
 
-            let filePath;
-            if (safeUrl === "/") {
-                filePath = this.directory;
-            } else {
-                let safePath = path
-                    .normalize(safeUrl)
-                    .replace(/^(\.[\/\\])+/, "");
-                filePath = path.join(this.directory, safePath);
+            const filePath = path.resolve(this.directory, "." + safeUrl);
+
+            const relativePath = path.relative(this.directory, filePath);
+
+            if (
+                path.isAbsolute(relativePath) ||
+                relativePath === ".." ||
+                relativePath.startsWith(".." + path.sep)
+            ) {
+                res.writeHead(403);
+                res.end("403 Forbidden");
+                return;
             }
 
-            if (!filePath.startsWith(this.directory)) {
-                res.writeHead(403, { "Content-Type": "text/html" });
-                res.end("<h1>403 Forbidden</h1>", "utf-8");
+            const checkPath = () => {
+                let isDirectory = false;
+
+                try {
+                    isDirectory = fs.statSync(filePath).isDirectory();
+                } catch {
+                    // A missing file will be handled by the existing 404 response.
+                }
+
+                return (
+                    this.excludeManager?.isExcluded(filePath, isDirectory) ??
+                    false
+                );
+            };
+
+            if (checkPath()) {
+                res.writeHead(404);
+                res.end("404 Not Found");
                 return;
             }
 
@@ -117,12 +148,7 @@ class DevServer {
                     this.directory,
                     { recursive: true },
                     (eventType, filename) => {
-                        if (filename) {
-                            this.wss.clients.forEach(client => {
-                                if (client.readyState === 1)
-                                    client.send("reload");
-                            });
-                        }
+                        this.handleFileChange(filename);
                     }
                 );
             } catch (e) {
@@ -165,6 +191,12 @@ class DevServer {
         const extname = path.extname(filePath);
         const contentType =
             this.mimeTypes[extname] || "application/octet-stream";
+
+        if (this.excludeManager?.isExcluded(filePath, false)) {
+            res.writeHead(404);
+            res.end("404 Not Found");
+            return;
+        }
 
         fs.readFile(filePath, (err, content) => {
             if (err) {
@@ -218,13 +250,24 @@ class DevServer {
                 html += `<li><a href="${parentUrl}">📁 [Parent Directory]</a></li>`;
             }
 
-            files.forEach(file => {
-                const isDir = file.isDirectory();
-                const icon = isDir ? "📁" : "📄";
-                const fileName = file.name;
-                const fileUrl = path.join(reqUrl, fileName).replace(/\\/g, "/");
-                html += `<li>${icon} <a href="${fileUrl}">${fileName}${isDir ? "/" : ""}</a></li>`;
-            });
+            files
+                .filter(file => {
+                    const fullPath = path.join(dirPath, file.name);
+
+                    return !this.excludeManager?.isExcluded(
+                        fullPath,
+                        file.isDirectory()
+                    );
+                })
+                .forEach(file => {
+                    const isDir = file.isDirectory();
+                    const icon = isDir ? "📁" : "📄";
+                    const fileName = file.name;
+                    const fileUrl = path
+                        .join(reqUrl, fileName)
+                        .replace(/\\/g, "/");
+                    html += `<li>${icon} <a href="${fileUrl}">${fileName}${isDir ? "/" : ""}</a></li>`;
+                });
 
             html += `</ul></body></html>`;
 
@@ -233,17 +276,109 @@ class DevServer {
         });
     }
 
-    stop(callback) {
-        if (this.watcher) this.watcher.close();
-        if (this.wss) this.wss.close();
-        if (this.server) {
-            this.server.close(() => {
-                console.log("[DevServer] Stopped.");
-                this.server = null;
-                if (callback) callback();
-            });
-        }
+
+handleFileChange(filename) {
+    if (!filename || !this.wss) return;
+
+    const changedPath = path.resolve(
+        this.directory,
+        filename.toString()
+    );
+
+    let isDirectory = false;
+
+    try {
+        isDirectory = fs.statSync(changedPath).isDirectory();
+    } catch {
+        // Deleted files may no longer exist.
     }
+
+    if (this.excludeManager?.isExcluded(
+        changedPath,
+        isDirectory
+    )) {
+        return;
+    }
+
+    clearTimeout(this.reloadTimer);
+
+    this.reloadTimer = setTimeout(() => {
+    if (!this.wss) return;
+
+    let clientsReloaded = 0;
+
+    this.wss.clients.forEach(client => {
+        if (client.readyState === 1) {
+            client.send("reload");
+            clientsReloaded++;
+        }
+    });
+
+    if (clientsReloaded > 0) {
+        console.log(
+            `[DevServer] Live reload (last event): ${filename} (${clientsReloaded} client${clientsReloaded === 1 ? "" : "s"})`
+        );
+    }
+}, 150);
+}
+
+    
+    async stop() {
+    console.log("[DevServer] Closing server...");
+
+    // Stop pending live-reload work.
+    if (this.reloadTimer) {
+        clearTimeout(this.reloadTimer);
+        this.reloadTimer = null;
+    }
+
+    // Stop watching files.
+    if (this.watcher) {
+        this.watcher.close();
+        this.watcher = null;
+        console.log("[DevServer] File watcher closed.");
+    }
+
+    // Close WebSocket connections so they cannot keep Node running.
+    if (this.wss) {
+        for (const client of this.wss.clients) {
+            client.terminate();
+        }
+
+        await new Promise(resolve => {
+            this.wss.close(() => {
+                console.log("[DevServer] WebSocket server closed.");
+                resolve();
+            });
+        });
+
+        this.wss = null;
+    }
+
+    // Close the HTTP server.
+    if (this.server) {
+        const server = this.server;
+
+        await new Promise(resolve => {
+            if (!server.listening) {
+                resolve();
+                return;
+            }
+
+            server.close(() => {
+                console.log("[DevServer] HTTP server closed.");
+                resolve();
+            });
+
+            // Prevent idle keep-alive connections from delaying shutdown.
+            server.closeAllConnections?.();
+        });
+
+        this.server = null;
+    }
+
+    console.log("[DevServer] Shutdown complete.");
+}
 }
 
 module.exports = DevServer;

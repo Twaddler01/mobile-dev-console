@@ -1,22 +1,17 @@
-Personal notes
+# Personal ignores
 
-/notes/
+**/notes/
+**/gitignored/
 
-Environment secrets
+# Environment secrets
 
 .env
 .env.*
 
-Dependencies
+# Test dumps
 
-node_modules/
+**/node_modules/
 
-OS files
-
-.DS_Store
-Thumbs.db
-
-Editor files
-
-.vscode/
-.idea/
+# Keystore files
+*.jks
+*.keystore

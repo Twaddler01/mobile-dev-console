@@ -667,6 +667,14 @@ export default class Console {
         this.output.table(data);
     }
 
+    info(...items) {
+        this.output.log(...items);
+    }
+    
+    debug(...items) {
+        this.output.log(...items);
+    }
+
     clear() {
         this.output.clear();
     }

@@ -1,7 +1,8 @@
-
 const CONSOLE_SOURCE = "mobile-dev-console";
 
 const frameUrl = new URL("./console-frame.html", import.meta.url);
+
+const targetOrigin = frameUrl.origin === "null" ? "*" : frameUrl.origin;
 
 function serialize(value) {
     if (value instanceof Error) {
@@ -73,37 +74,52 @@ function installConsoleLoader() {
             return;
         }
 
-        frame.contentWindow?.postMessage(message, location.origin);
+        frame.contentWindow?.postMessage(message, targetOrigin);
     }
 
-    function flushQueue() {
-        while (queue.length) {
-            frame.contentWindow?.postMessage(
-                queue.shift(),
-                location.origin
-            );
-        }
+    
+function flushQueue() {
+    while (queue.length) {
+        const message = queue.shift();
+
+        frame.contentWindow?.postMessage(
+            message,
+            targetOrigin
+        );
     }
+}
+
 
     function onMessage(event) {
-        if (
-            event.source !== frame.contentWindow ||
-            event.origin !== location.origin ||
-            event.data?.source !== CONSOLE_SOURCE
-        ) {
+        if (event.source !== frame.contentWindow) {
+            return;
+        }
+
+        if (event.data?.source !== CONSOLE_SOURCE) {
             return;
         }
 
         if (event.data.type === "console-ready") {
             ready = true;
             flushQueue();
+
+            // Visible confirmation in the parent page.
+            frame.contentWindow.postMessage(
+                {
+                    source: CONSOLE_SOURCE,
+                    type: "console-parent-connected"
+                },
+                targetOrigin
+            );
+
+            return;
         }
 
         if (event.data.type === "console-init-error") {
-            console.error(
-                "[mobile-dev-console] Failed to initialize:",
+            send("error", [
+                "[Console Initialization Failed]",
                 event.data.message
-            );
+            ]);
         }
     }
 
@@ -122,17 +138,11 @@ function installConsoleLoader() {
     }
 
     function onUnhandledRejection(event) {
-        send("error", [
-            "Unhandled promise rejection:",
-            event.reason
-        ]);
+        send("error", ["Unhandled promise rejection:", event.reason]);
     }
 
     window.addEventListener("error", onError, true);
-    window.addEventListener(
-        "unhandledrejection",
-        onUnhandledRejection
-    );
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
 
     // Forward page console output.
     const originalConsole = {};
@@ -150,12 +160,14 @@ function installConsoleLoader() {
     ];
 
     for (const method of methods) {
-        originalConsole[method] =
-            console[method].bind(console);
+        originalConsole[method] = console[method].bind(console);
 
         console[method] = (...args) => {
-            send(method, args);
-        };
+    send(method, args);
+
+    // Keep native output available while debugging.
+    originalConsole[method](...args);
+};
     }
 
     // Append after the example's existing content.
@@ -190,8 +202,7 @@ function installConsoleLoader() {
         warn: (...args) => send("warn", args),
         error: (...args) => send("error", args),
         group: (...args) => send("group", args),
-        groupCollapsed: (...args) =>
-            send("groupCollapsed", args),
+        groupCollapsed: (...args) => send("groupCollapsed", args),
         groupEnd: () => send("groupEnd"),
         table: data => send("table", [data]),
         clear: () => send("clear"),

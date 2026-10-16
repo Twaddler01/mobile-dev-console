@@ -33,11 +33,14 @@
         <script src="./errorBootstrap.js"></script>
 
         <script type="module">
+            const targetOrigin =
+                location.origin === "null" ? "*" : location.origin;
+
             try {
                 const { default: Console } = await import("./Console.js");
 
                 const devConsole = new Console({
-                    captureConsole: true,
+                    captureConsole: false,
                     mirrorToNative: false,
                     showCopyButtons: false,
                     allowDragOutsideBounds: false
@@ -58,18 +61,23 @@
 
                 window.addEventListener("message", event => {
                     if (
-                        event.source !== window.parent ||
-                        event.origin !== location.origin ||
-                        event.data?.source !== "mobile-dev-console" ||
-                        event.data?.type !== "console-call"
+                        event.source === window.parent &&
+                        event.data?.source === "mobile-dev-console" &&
+                        event.data?.type === "console-parent-connected"
                     ) {
                         return;
                     }
 
                     const { method, args = [] } = event.data;
 
-                    if (allowedMethods.has(method)) {
+                    // devConsole.log("[Bridge diagnostic]", method, args);
+
+                    if (!allowedMethods.has(method)) return;
+
+                    if (typeof devConsole[method] === "function") {
                         devConsole[method](...args);
+                    } else if (method === "info" || method === "debug") {
+                        devConsole.log(...args);
                     }
                 });
 
@@ -78,17 +86,11 @@
                         source: "mobile-dev-console",
                         type: "console-ready"
                     },
-                    location.origin
+                    targetOrigin
                 );
             } catch (error) {
-                window.parent.postMessage(
-                    {
-                        source: "mobile-dev-console",
-                        type: "console-init-error",
-                        message: String(error?.stack || error)
-                    },
-                    location.origin
-                );
+                document.getElementById("bridgeStatus").textContent =
+                    "Console initialization failed: " + String(error);
             }
         </script>
     </body>

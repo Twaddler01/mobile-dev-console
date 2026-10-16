@@ -6,9 +6,6 @@ class TestEnvironment {
 
         this.testUncaughtError();
         this.testUnhandledRejection();
-
-        // Test a live error
-        // this.testFailedResource();
     }
 
     // ==========================================

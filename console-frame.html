@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Developer Console</title>
+        <link rel="stylesheet" href="./console.css" />
+        <style>
+            html,
+            body {
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+                background: #222;
+            }
+
+            #consoleLog {
+                position: relative;
+                inset: auto;
+                width: 100%;
+                height: 100%;
+                min-height: 0;
+                max-height: 100%;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="productionErrorLog"></div>
+        <div id="consoleLog"></div>
+
+        <script src="./errorBootstrap.js"></script>
+
+        <script type="module">
+            try {
+                const { default: Console } = await import("./Console.js");
+
+                const devConsole = new Console({
+                    captureConsole: true,
+                    mirrorToNative: false,
+                    showCopyButtons: false,
+                    allowDragOutsideBounds: false
+                });
+
+                const allowedMethods = new Set([
+                    "log",
+                    "info",
+                    "debug",
+                    "warn",
+                    "error",
+                    "group",
+                    "groupCollapsed",
+                    "groupEnd",
+                    "table",
+                    "clear"
+                ]);
+
+                window.addEventListener("message", event => {
+                    if (
+                        event.source !== window.parent ||
+                        event.origin !== location.origin ||
+                        event.data?.source !== "mobile-dev-console" ||
+                        event.data?.type !== "console-call"
+                    ) {
+                        return;
+                    }
+
+                    const { method, args = [] } = event.data;
+
+                    if (allowedMethods.has(method)) {
+                        devConsole[method](...args);
+                    }
+                });
+
+                window.parent.postMessage(
+                    {
+                        source: "mobile-dev-console",
+                        type: "console-ready"
+                    },
+                    location.origin
+                );
+            } catch (error) {
+                window.parent.postMessage(
+                    {
+                        source: "mobile-dev-console",
+                        type: "console-init-error",
+                        message: String(error?.stack || error)
+                    },
+                    location.origin
+                );
+            }
+        </script>
+    </body>
+</html>

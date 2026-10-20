@@ -19,6 +19,9 @@ export default class Console {
             throw new Error("Console: #consoleLog element was not found.");
         }
 
+        this.cleanupCallbacks = [];
+        this.previousDevConsole = window.devConsole;
+
         this.createUI();
 
         this.output = new ConsoleOutput(
@@ -425,9 +428,7 @@ export default class Console {
             allowDragOutsideBounds: this.element.querySelector(
                 "#settingAllowDragOutsideBounds"
             ),
-            logTestOutput: this.element.querySelector(
-                "#settingLogTestOutput"
-            )
+            logTestOutput: this.element.querySelector("#settingLogTestOutput")
         };
 
         // Initialize checkboxes from the current settings.
@@ -503,7 +504,7 @@ export default class Console {
         this.dragOffsetX = 0;
         this.dragOffsetY = 0;
 
-        this.dragHandle.addEventListener("pointerdown", event => {
+        const onPointerDown = event => {
             if (
                 this.isDocked ||
                 (event.button !== 0 && event.pointerType === "mouse")
@@ -521,16 +522,14 @@ export default class Console {
             try {
                 this.dragHandle.setPointerCapture(event.pointerId);
             } catch {
-                // Document-level pointer listeners remain as a fallback.
+                // Document-level pointer listeners are the fallback.
             }
 
             event.preventDefault();
-        });
+        };
 
-        document.addEventListener("pointermove", event => {
-            if (!this.isDragging || this.isDocked) {
-                return;
-            }
+        const onPointerMove = event => {
+            if (!this.isDragging || this.isDocked) return;
 
             let x = event.clientX - this.dragOffsetX;
             let y = event.clientY - this.dragOffsetY;
@@ -550,14 +549,23 @@ export default class Console {
             this.element.style.bottom = "auto";
 
             event.preventDefault();
-        });
+        };
 
         const stopDragging = () => {
             this.isDragging = false;
         };
 
+        this.dragHandle.addEventListener("pointerdown", onPointerDown);
+        document.addEventListener("pointermove", onPointerMove);
         document.addEventListener("pointerup", stopDragging);
         document.addEventListener("pointercancel", stopDragging);
+
+        this.cleanupCallbacks.push(() => {
+            this.dragHandle.removeEventListener("pointerdown", onPointerDown);
+            document.removeEventListener("pointermove", onPointerMove);
+            document.removeEventListener("pointerup", stopDragging);
+            document.removeEventListener("pointercancel", stopDragging);
+        });
     }
 
     undock() {
@@ -670,7 +678,7 @@ export default class Console {
     info(...items) {
         this.output.log(...items);
     }
-    
+
     debug(...items) {
         this.output.log(...items);
     }
@@ -690,6 +698,33 @@ export default class Console {
                 `[Capture Check] ${method}:`,
                 current === original ? "ORIGINAL (NOT CAPTURED)" : "REPLACED"
             );
+        }
+    }
+
+    destroy() {
+        if (this.destroyed) return;
+        this.destroyed = true;
+
+        this.restoreNativeConsole();
+
+        this.logObserver?.disconnect();
+        this.logObserver = null;
+
+        for (const cleanup of this.cleanupCallbacks) {
+            cleanup();
+        }
+
+        this.cleanupCallbacks.length = 0;
+
+        this.inspector?.destroy?.();
+        this.tests?.destroy?.();
+
+        if (window.devConsole === this) {
+            if (this.previousDevConsole == null) {
+                delete window.devConsole;
+            } else {
+                window.devConsole = this.previousDevConsole;
+            }
         }
     }
 }

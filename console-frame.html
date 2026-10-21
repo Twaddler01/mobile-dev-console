@@ -37,8 +37,7 @@
         <script type="module">
             const CONSOLE_SOURCE = "mobile-dev-console";
 
-            const targetOrigin =
-                location.origin === "null" ? "*" : location.origin;
+            let trustedParentOrigin = null;
 
             const allowedMethods = new Set([
                 "log",
@@ -64,7 +63,7 @@
                         source: CONSOLE_SOURCE,
                         ...message
                     },
-                    targetOrigin
+                    trustedParentOrigin ?? "*"
                 );
             }
 
@@ -148,7 +147,7 @@
             }
 
             function applyConsoleSettings() {
-                if (!devConsole || !pendingSettings) return;
+                if (!devConsole || !pendingSettings) return false;
 
                 for (const [key, value] of Object.entries(pendingSettings)) {
                     if (key in devConsole.settings) {
@@ -157,6 +156,7 @@
                 }
 
                 pendingSettings = null;
+                return true;
             }
 
             function handleMessage(event) {
@@ -165,13 +165,35 @@
 
                 const data = event.data;
 
+                // Accept the first initialization message, then lock to that
+                // parent's origin for all subsequent messages.
+                if (trustedParentOrigin === null) {
+                    if (data.type !== "console-init") return;
+                    trustedParentOrigin = event.origin;
+                } else if (event.origin !== trustedParentOrigin) {
+                    return;
+                }
+
                 switch (data.type) {
                     case "console-parent-connected":
                         return;
 
                     case "console-init":
                         pendingSettings = data.settings ?? {};
-                        applyConsoleSettings();
+
+                        try {
+                            if (!applyConsoleSettings()) return;
+
+                            postToParent({
+                                type: "console-initialized"
+                            });
+                        } catch (error) {
+                            postToParent({
+                                type: "console-init-error",
+                                message: String(error?.stack || error)
+                            });
+                        }
+
                         return;
 
                     case "console-call": {

@@ -210,11 +210,11 @@ function createEmbeddedConsole({
 
     const onConsoleMessage = event => {
         if (event.source !== frame.contentWindow) return;
+        if (event.origin !== frameUrl.origin) return;
         if (event.data?.source !== CONSOLE_SOURCE) return;
 
         if (event.data.type === "console-collapse-changed") {
             const collapsed = event.data.collapsed;
-
             host.style.height = collapsed ? "40px" : height;
         }
     };
@@ -222,6 +222,7 @@ function createEmbeddedConsole({
     window.addEventListener("message", onConsoleMessage);
 
     let ready = false;
+    let initialized = false;
     let destroyed = false;
     let nextRequestId = 0;
 
@@ -254,7 +255,7 @@ function createEmbeddedConsole({
             ...message
         };
 
-        if (!ready) {
+        if (!initialized) {
             queue.push(payload);
             return;
         }
@@ -263,7 +264,7 @@ function createEmbeddedConsole({
     }
 
     function flushQueue() {
-        while (queue.length && ready && !destroyed) {
+        while (queue.length && initialized && !destroyed) {
             frame.contentWindow?.postMessage(queue.shift(), targetOrigin);
         }
     }
@@ -457,24 +458,41 @@ function createEmbeddedConsole({
 
     function onMessage(event) {
         if (event.source !== frame.contentWindow) return;
+        if (event.origin !== frameUrl.origin) return;
         if (event.data?.source !== CONSOLE_SOURCE) return;
 
         const data = event.data;
 
         if (data.type === "console-ready") {
-            ready = true;
-            flushQueue();
+            if (ready) return;
 
-            postToFrame({
-                type: "console-init",
-                settings: {
-                    captureConsole,
-                    mirrorToNative,
-                    showCopyButtons,
-                    allowDragOutsideBounds,
-                    logTestOutput
-                }
-            });
+            ready = true;
+
+            // Send initialization directly. It must not wait in the
+            // regular command queue, because that queue waits for initialization.
+            frame.contentWindow?.postMessage(
+                {
+                    source: CONSOLE_SOURCE,
+                    type: "console-init",
+                    settings: {
+                        captureConsole,
+                        mirrorToNative,
+                        showCopyButtons,
+                        allowDragOutsideBounds,
+                        logTestOutput
+                    }
+                },
+                targetOrigin
+            );
+
+            return;
+        }
+
+        if (data.type === "console-initialized") {
+            if (!ready || initialized) return;
+
+            initialized = true;
+            flushQueue();
 
             postToFrame({
                 type: "console-parent-connected"
@@ -484,7 +502,21 @@ function createEmbeddedConsole({
         }
 
         if (data.type === "console-init-error") {
-            send("error", ["[Console Initialization Failed]", data.message]);
+            const message = ["[Console Initialization Failed]", data.message];
+
+            if (typeof originalConsole.error === "function") {
+                originalConsole.error(...message);
+            }
+
+            for (const pending of pendingRegistryRequests.values()) {
+                pending.reject(
+                    new Error(data.message || "Console initialization failed.")
+                );
+            }
+
+            pendingRegistryRequests.clear();
+            queue.length = 0;
+
             return;
         }
 
@@ -594,6 +626,7 @@ function createEmbeddedConsole({
             destroyed = true;
 
             window.removeEventListener("message", onMessage);
+            window.removeEventListener("message", onConsoleMessage);
             window.removeEventListener("error", onError, true);
             window.removeEventListener(
                 "unhandledrejection",

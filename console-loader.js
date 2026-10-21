@@ -1,7 +1,132 @@
+import Console from "./Console.js";
+
 const CONSOLE_SOURCE = "mobile-dev-console";
 
+const consoleCssUrl = new URL("./console.css", import.meta.url).href;
 const frameUrl = new URL("./console-frame.html", import.meta.url);
+
 const targetOrigin = frameUrl.origin === "null" ? "*" : frameUrl.origin;
+
+function ensureConsoleStyles() {
+    if (document.querySelector("link[data-mobile-dev-console-styles]")) {
+        return;
+    }
+
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = consoleCssUrl;
+    link.dataset.mobileDevConsoleStyles = "";
+
+    document.head.appendChild(link);
+}
+
+function createConsoleElement() {
+    const element = document.createElement("div");
+    element.id = "consoleLog";
+    document.body.appendChild(element);
+
+    return element;
+}
+
+/**
+ * Public entry point.
+ *
+ * Overlay: renders Console.js directly in this document.
+ * Embedded: renders console-frame.html inside the supplied mount point.
+ */
+export function createConsoleHost(options = {}) {
+    const mode = options.mode ?? "overlay";
+
+    if (mode === "overlay") {
+        return createOverlayConsole(options);
+    }
+
+    if (mode === "embedded") {
+        return createEmbeddedConsole(options);
+    }
+
+    throw new TypeError('mode must be "overlay" or "embedded".');
+}
+
+function createOverlayConsole({
+    captureConsole = true,
+    mirrorToNative = false,
+    showCopyButtons = false,
+    allowDragOutsideBounds = true,
+    logTestOutput = true
+} = {}) {
+    ensureConsoleStyles();
+
+    const existingElement = document.getElementById("consoleLog");
+    const consoleElement = existingElement ?? createConsoleElement();
+    const ownsElement = !existingElement;
+    const previousDevConsole = window.devConsole;
+
+    let consoleInstance;
+
+    try {
+        consoleInstance = new Console({
+            captureConsole,
+            mirrorToNative,
+            showCopyButtons,
+            allowDragOutsideBounds,
+            logTestOutput
+        });
+    } catch (error) {
+        if (ownsElement) {
+            consoleElement.remove();
+        }
+
+        throw error;
+    }
+
+    let destroyed = false;
+
+    const api = {
+        mode: "overlay",
+        host: consoleElement,
+        frame: null,
+
+        console: consoleInstance,
+        devConsole: consoleInstance,
+
+        tests: consoleInstance.tests,
+
+        registerSuite(definition) {
+            return consoleInstance.tests.registerSuite(definition);
+        },
+
+        unregisterSuite(id) {
+            return consoleInstance.tests.unregisterSuite(id);
+        },
+
+        getSuites() {
+            return consoleInstance.tests.getSuites();
+        },
+
+        destroy() {
+            if (destroyed) return;
+            destroyed = true;
+
+            consoleInstance.destroy();
+
+            // Only remove an element created by this loader.
+            if (ownsElement) {
+                consoleElement.remove();
+            }
+
+            if (window.devConsole === consoleInstance) {
+                if (previousDevConsole == null) {
+                    delete window.devConsole;
+                } else {
+                    window.devConsole = previousDevConsole;
+                }
+            }
+        }
+    };
+
+    return api;
+}
 
 function serialize(value) {
     if (value instanceof Error) {
@@ -35,25 +160,66 @@ function serialize(value) {
     }
 }
 
-function installConsoleLoader() {
-    if (window.__mobileDevConsoleLoader) {
-        return window.__mobileDevConsoleLoader;
+function createEmbeddedConsole({
+    mountPoint,
+    height = "60dvh",
+    captureConsole = true,
+    mirrorToNative = true,
+    showCopyButtons = false,
+    allowDragOutsideBounds = true,
+    logTestOutput = true
+} = {}) {
+    const mount =
+        typeof mountPoint === "string"
+            ? document.querySelector(mountPoint)
+            : mountPoint;
+
+    if (!(mount instanceof Element)) {
+        throw new TypeError(
+            "Embedded mode requires mountPoint to be an element or selector."
+        );
     }
 
-    const frame = document.createElement("iframe");
+    const host = document.createElement("div");
+    host.className = "mobile-dev-console-host";
 
+    Object.assign(host.style, {
+        position: "relative",
+        width: "100%",
+        height,
+        minHeight: "0",
+        boxSizing: "border-box"
+    });
+
+    const frame = document.createElement("iframe");
     frame.title = "Developer Console";
     frame.src = frameUrl.href;
 
     Object.assign(frame.style, {
         display: "block",
         width: "100%",
-        height: "60vh",
+        height: "100%",
+        minHeight: "0",
         border: "0",
-        flex: "0 0 auto"
+        flex: "0 0 auto",
+        pointerEvents: "auto"
     });
 
     frame.setAttribute("loading", "eager");
+    host.appendChild(frame);
+
+    const onConsoleMessage = event => {
+        if (event.source !== frame.contentWindow) return;
+        if (event.data?.source !== CONSOLE_SOURCE) return;
+
+        if (event.data.type === "console-collapse-changed") {
+            const collapsed = event.data.collapsed;
+
+            host.style.height = collapsed ? "40px" : height;
+        }
+    };
+
+    window.addEventListener("message", onConsoleMessage);
 
     let ready = false;
     let destroyed = false;
@@ -77,6 +243,8 @@ function installConsoleLoader() {
     ];
 
     const originalConsole = {};
+    const installedWrappers = {};
+    let devConsole;
 
     function postToFrame(message) {
         if (destroyed) return;
@@ -259,7 +427,7 @@ function installConsoleLoader() {
 
         try {
             const result = await action.run({
-                console: window.devConsole,
+                console: devConsole,
                 suite: {
                     id: suite.id,
                     name: suite.name
@@ -296,6 +464,17 @@ function installConsoleLoader() {
         if (data.type === "console-ready") {
             ready = true;
             flushQueue();
+
+            postToFrame({
+                type: "console-init",
+                settings: {
+                    captureConsole,
+                    mirrorToNative,
+                    showCopyButtons,
+                    allowDragOutsideBounds,
+                    logTestOutput
+                }
+            });
 
             postToFrame({
                 type: "console-parent-connected"
@@ -357,16 +536,23 @@ function installConsoleLoader() {
     window.addEventListener("unhandledrejection", onUnhandledRejection);
 
     // Preserve native console output while forwarding it to the iframe.
-    for (const method of methods) {
-        originalConsole[method] = console[method].bind(console);
-
-        console[method] = (...args) => {
-            send(method, args);
-            originalConsole[method](...args);
-        };
+    if (captureConsole) {
+        for (const method of methods) {
+            originalConsole[method] = console[method];
+            installedWrappers[method] = (...args) => {
+                send(method, args);
+                if (
+                    mirrorToNative &&
+                    typeof originalConsole[method] === "function"
+                ) {
+                    originalConsole[method].apply(console, args);
+                }
+            };
+            console[method] = installedWrappers[method];
+        }
     }
 
-    const devConsole = {
+    devConsole = {
         log: (...args) => send("log", args),
         info: (...args) => send("info", args),
         debug: (...args) => send("debug", args),
@@ -386,13 +572,22 @@ function installConsoleLoader() {
         }
     };
 
-    window.devConsole = devConsole;
+    // Compatibility alias only. New integrations should use the returned instance.
+    const previousGlobalDevConsole = window.devConsole;
+    if (previousGlobalDevConsole == null) {
+        window.devConsole = devConsole;
+    }
 
-    document.body.appendChild(frame);
+    mount.appendChild(host);
 
     const api = {
         frame,
+        host,
         devConsole,
+        mode: "embedded",
+        registerSuite,
+        unregisterSuite,
+        getSuites,
 
         destroy() {
             if (destroyed) return;
@@ -406,7 +601,13 @@ function installConsoleLoader() {
             );
 
             for (const method of methods) {
-                console[method] = originalConsole[method];
+                // Do not overwrite another tool that wrapped console after us.
+                if (
+                    installedWrappers[method] &&
+                    console[method] === installedWrappers[method]
+                ) {
+                    console[method] = originalConsole[method];
+                }
             }
 
             for (const pending of pendingRegistryRequests.values()) {
@@ -419,21 +620,14 @@ function installConsoleLoader() {
             suites.clear();
             queue.length = 0;
 
-            frame.remove();
-
-            if (window.__mobileDevConsoleLoader === api) {
-                delete window.__mobileDevConsoleLoader;
-            }
+            host.remove();
 
             if (window.devConsole === devConsole) {
-                delete window.devConsole;
+                if (previousGlobalDevConsole == null) delete window.devConsole;
+                else window.devConsole = previousGlobalDevConsole;
             }
         }
     };
 
-    window.__mobileDevConsoleLoader = api;
-
     return api;
 }
-
-installConsoleLoader();

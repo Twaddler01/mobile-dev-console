@@ -56,6 +56,7 @@
             const pendingActions = new Map();
             let nextActionRequestId = 0;
             let devConsole;
+            let pendingSettings = null;
 
             function postToParent(message) {
                 window.parent.postMessage(
@@ -146,6 +147,18 @@
                 }
             }
 
+            function applyConsoleSettings() {
+                if (!devConsole || !pendingSettings) return;
+
+                for (const [key, value] of Object.entries(pendingSettings)) {
+                    if (key in devConsole.settings) {
+                        devConsole.updateSetting(key, value);
+                    }
+                }
+
+                pendingSettings = null;
+            }
+
             function handleMessage(event) {
                 if (event.source !== window.parent) return;
                 if (event.data?.source !== CONSOLE_SOURCE) return;
@@ -154,6 +167,11 @@
 
                 switch (data.type) {
                     case "console-parent-connected":
+                        return;
+
+                    case "console-init":
+                        pendingSettings = data.settings ?? {};
+                        applyConsoleSettings();
                         return;
 
                     case "console-call": {
@@ -218,8 +236,23 @@
                     captureConsole: false,
                     mirrorToNative: false,
                     showCopyButtons: false,
-                    allowDragOutsideBounds: false
+                    allowDragOutsideBounds: false,
+                    logTestOutput: true
                 });
+
+                applyConsoleSettings();
+
+                const consoleElement = document.getElementById("consoleLog");
+
+                consoleElement.addEventListener(
+                    "console-collapse-changed",
+                    event => {
+                        postToParent({
+                            type: "console-collapse-changed",
+                            collapsed: event.detail.collapsed
+                        });
+                    }
+                );
 
                 postToParent({ type: "console-ready" });
             } catch (error) {

@@ -52,6 +52,8 @@ if (devConsole?.tests) {
             },
         ]
     });
+
+    console.log('DemoDebugSuite: mobile-dev-console integrated.');
 } else {
     console.warn("DemoDebugSuite: mobile-dev-console integration API is unavailable.");
 }

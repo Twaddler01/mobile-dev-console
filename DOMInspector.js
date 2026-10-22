@@ -1,47 +1,109 @@
 /**
  * DOMInspector
  *
- * Inspect adapter for ordinary DOM elements. Kept independent from Console so
- * future adapters (for example Phaser game objects) can use the same tab shell.
+ * Iframe-side UI adapter for the parent-page DOMInspectorHost.
+ * The inspected page's DOM is accessed only through the
+ * parentDOMInspector message bridge.
  */
 export default class DOMInspector {
     constructor({ panel, consoleElement, maxNodes = 500 } = {}) {
-        if (!panel) throw new Error("DOMInspector: panel is required.");
-        if (!consoleElement) throw new Error("DOMInspector: consoleElement is required.");
+        if (!panel) {
+            throw new Error("DOMInspector: panel is required.");
+        }
+
+        if (!consoleElement) {
+            throw new Error("DOMInspector: consoleElement is required.");
+        }
+
+        if (!window.parentDOMInspector) {
+            throw new Error(
+                "DOMInspector: parent inspection bridge is unavailable."
+            );
+        }
 
         this.panel = panel;
         this.consoleElement = consoleElement;
         this.maxNodes = maxNodes;
-        this.nodeCount = 0;
-        this.elementIds = new WeakMap();
-        this.elementsById = new Map();
-        this.nextElementId = 1;
-        this.selectedElement = null;
+
+        this.treeData = null;
+        this.selectedId = null;
+        this.selectedDetails = null;
         this.picking = false;
+        this.destroyed = false;
+        this.refreshVersion = 0;
 
         this.renderUI();
         this.bindEvents();
-        this.createHighlight();
+
+        this.onInspectorEvent = event => {
+            this.handleInspectorEvent(event.detail);
+        };
+
+        window.addEventListener(
+            "devtools-inspect-event",
+            this.onInspectorEvent
+        );
+
         this.refresh();
     }
+
+    // --------------------------------------------------
+    // UI
+    // --------------------------------------------------
 
     renderUI() {
         this.panel.innerHTML = `
             <div class="dom-inspector">
                 <div class="dom-inspector-toolbar">
-                    <button class="dom-inspector-button" id="domPickElement" type="button">PICK ELEMENT</button>
-                    <button class="dom-inspector-button" id="domRefreshTree" type="button">REFRESH</button>
-                    <span class="dom-inspector-status" id="domInspectorStatus">Select an element</span>
+                    <button
+                        class="dom-inspector-button"
+                        id="domPickElement"
+                        type="button"
+                    >PICK ELEMENT</button>
+
+                    <button
+                        class="dom-inspector-button"
+                        id="domRefreshTree"
+                        type="button"
+                    >REFRESH</button>
+
+                    <span
+                        class="dom-inspector-status"
+                        id="domInspectorStatus"
+                    >Loading page…</span>
                 </div>
+
                 <div class="dom-inspector-workspace">
-                    <section class="dom-tree-pane" aria-label="DOM tree">
-                        <div class="dom-pane-heading">ELEMENT TREE</div>
-                        <div class="dom-tree-scroll" id="domTree"></div>
+                    <section
+                        class="dom-tree-pane"
+                        aria-label="DOM tree"
+                    >
+                        <div class="dom-pane-heading">
+                            ELEMENT TREE
+                        </div>
+
+                        <div
+                            class="dom-tree-scroll"
+                            id="domTree"
+                        ></div>
                     </section>
-                    <section class="dom-details-pane" aria-label="Selected element details">
-                        <div class="dom-pane-heading">ELEMENT DETAILS</div>
-                        <div class="dom-details-scroll" id="domDetails">
-                            <p class="dom-inspector-empty">Choose an element from the tree or use PICK ELEMENT.</p>
+
+                    <section
+                        class="dom-details-pane"
+                        aria-label="Selected element details"
+                    >
+                        <div class="dom-pane-heading">
+                            ELEMENT DETAILS
+                        </div>
+
+                        <div
+                            class="dom-details-scroll"
+                            id="domDetails"
+                        >
+                            <p class="dom-inspector-empty">
+                                Choose an element from the tree
+                                or use PICK ELEMENT.
+                            </p>
                         </div>
                     </section>
                 </div>
@@ -49,9 +111,13 @@ export default class DOMInspector {
         `;
 
         this.pickButton = this.panel.querySelector("#domPickElement");
+
         this.refreshButton = this.panel.querySelector("#domRefreshTree");
+
         this.status = this.panel.querySelector("#domInspectorStatus");
+
         this.tree = this.panel.querySelector("#domTree");
+
         this.details = this.panel.querySelector("#domDetails");
     }
 
@@ -60,303 +126,577 @@ export default class DOMInspector {
             this.setPicking(!this.picking);
         });
 
-        this.refreshButton.addEventListener("click", () => this.refresh());
+        this.refreshButton.addEventListener("click", () => {
+            this.refresh();
+        });
 
         this.tree.addEventListener("click", event => {
             const toggle = event.target.closest("[data-dom-toggle]");
+
             if (toggle && this.tree.contains(toggle)) {
-                const branch = toggle.closest(".dom-tree-node")?.querySelector(":scope > .dom-tree-children");
-                if (branch) {
-                    const expanded = toggle.getAttribute("aria-expanded") === "true";
-                    toggle.setAttribute("aria-expanded", String(!expanded));
-                    branch.hidden = expanded;
-                    toggle.textContent = expanded ? "▸" : "▾";
-                }
+                this.toggleBranch(toggle);
                 return;
             }
 
             const select = event.target.closest("[data-dom-select]");
+
             if (select && this.tree.contains(select)) {
-                const element = this.elementById(select.dataset.domSelect);
-                if (element) this.selectElement(element, { reveal: false });
+                this.selectElement(select.dataset.domSelect, { reveal: false });
             }
         });
-
-        this.onPointerDown = event => {
-            if (!this.picking || this.consoleElement.contains(event.target)) return;
-
-            const target = event.target instanceof Element ? event.target : event.target?.parentElement;
-            if (!target || target === document.documentElement || target === document.body) return;
-
-            event.preventDefault();
-            event.stopPropagation();
-            if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
-
-            this.setPicking(false);
-            this.selectElement(target, { reveal: true });
-        };
-        document.addEventListener("pointerdown", this.onPointerDown, true);
-
-        this.onKeyDown = event => {
-            if (event.key === "Escape" && this.picking) this.setPicking(false);
-        };
-        document.addEventListener("keydown", this.onKeyDown, true);
-
-        this.onViewportChange = () => this.updateHighlight();
-        window.addEventListener("resize", this.onViewportChange, { passive: true });
-        document.addEventListener("scroll", this.onViewportChange, true);
     }
 
-    createHighlight() {
-        this.highlight = document.createElement("div");
-        this.highlight.className = "dom-inspector-highlight";
-        this.highlight.hidden = true;
-        this.highlight.setAttribute("aria-hidden", "true");
-        document.body.appendChild(this.highlight);
+    // --------------------------------------------------
+    // Parent bridge
+    // --------------------------------------------------
+
+    async request(action, payload = {}) {
+        if (this.destroyed) {
+            throw new Error("DOMInspector has been destroyed.");
+        }
+
+        return window.parentDOMInspector.request(action, payload);
     }
 
-    setPicking(enabled) {
-        this.picking = Boolean(enabled);
+    async refresh({ selectedId = this.selectedId, reveal = false } = {}) {
+        const version = ++this.refreshVersion;
+
+        this.status.textContent = "Refreshing page tree…";
+        this.refreshButton.disabled = true;
+
+        try {
+            const tree = await this.request("get-tree");
+
+            if (this.destroyed || version !== this.refreshVersion) {
+                return;
+            }
+
+            if (!tree) {
+                throw new Error("The parent page returned an empty DOM tree.");
+            }
+
+            this.treeData = tree;
+            this.renderTree();
+
+            if (selectedId) {
+                const found = this.findNode(this.treeData, selectedId);
+
+                if (found) {
+                    await this.selectElement(selectedId, {
+                        reveal
+                    });
+                } else {
+                    this.selectedId = null;
+                    this.selectedDetails = null;
+                    this.renderSelectedState();
+                    this.renderEmptyDetails();
+                    this.status.textContent = "Select an element";
+                }
+            } else {
+                this.status.textContent = "Select an element";
+            }
+
+            if (this.countNodes(this.treeData) >= this.maxNodes) {
+                const note = document.createElement("div");
+
+                note.className = "dom-inspector-limit";
+                note.textContent = `Tree may be limited to ${this.maxNodes} elements.`;
+
+                this.tree.appendChild(note);
+            }
+        } catch (error) {
+            if (!this.destroyed && version === this.refreshVersion) {
+                this.status.textContent = "Unable to inspect page";
+                this.showError(error);
+            }
+        } finally {
+            if (!this.destroyed && version === this.refreshVersion) {
+                this.refreshButton.disabled = false;
+            }
+        }
+    }
+
+    async selectElement(id, { reveal = false } = {}) {
+        if (!id || this.destroyed) {
+            return;
+        }
+
+        this.status.textContent = "Selecting element…";
+
+        try {
+            const details = await this.request("select", { id });
+
+            if (this.destroyed) {
+                return;
+            }
+
+            if (!details) {
+                this.status.textContent = "Element no longer exists";
+
+                return;
+            }
+
+            this.selectedId = id;
+            this.selectedDetails = details;
+
+            this.renderSelectedState();
+
+            if (reveal) {
+                this.revealNode(id);
+            }
+
+            this.status.textContent = this.describeDetails(details);
+
+            this.renderDetails(details);
+        } catch (error) {
+            if (!this.destroyed) {
+                this.status.textContent = "Unable to select element";
+
+                this.showError(error);
+            }
+        }
+    }
+
+    async setPicking(enabled) {
+        if (this.destroyed) {
+            return;
+        }
+
+        enabled = Boolean(enabled);
+
+        if (this.picking === enabled) {
+            return;
+        }
+
+        // Update the UI immediately.
+        this.picking = enabled;
+        this.updatePickingUI();
+
+        try {
+            const result = await this.request(
+                enabled ? "start-picking" : "cancel-picking"
+            );
+
+            console.log(
+                `[DOMInspector] ${enabled ? "Start" : "Cancel"} picking result:`,
+                result
+            );
+
+            // Don't reset picking here. The parent controls its
+            // completion through picked/pick-cancelled events.
+        } catch (error) {
+            console.error("[DOMInspector] Picking request failed:", error);
+
+            this.picking = false;
+            this.updatePickingUI();
+            this.showError(error);
+        }
+    }
+
+    // --------------------------------------------------
+    // Parent-originated events
+    // --------------------------------------------------
+
+    handleInspectorEvent(message) {
+        if (this.destroyed || !message) {
+            return;
+        }
+
+        console.log("[DOMInspector] Parent event:", message);
+
+        const { event, payload = {} } = message;
+
+        switch (event) {
+            case "picked":
+                this.handlePicked(payload);
+                break;
+
+            case "selection-changed":
+                this.handleSelectionChanged(payload);
+                break;
+
+            case "pick-cancelled":
+                this.picking = false;
+                this.updatePickingUI();
+                break;
+        }
+    }
+
+    async handlePicked({ id, details }) {
+        this.picking = false;
+        this.updatePickingUI();
+
+        if (!id) {
+            return;
+        }
+
+        this.selectedId = id;
+        this.selectedDetails = details || null;
+
+        // The picked element might not be in the current tree
+        // if the page changed after the last refresh.
+        await this.refresh({
+            selectedId: id,
+            reveal: true
+        });
+    }
+
+    handleSelectionChanged({ id, details }) {
+        this.selectedId = id || null;
+        this.selectedDetails = details || null;
+
+        this.renderSelectedState();
+
+        if (details) {
+            this.status.textContent = this.describeDetails(details);
+
+            this.renderDetails(details);
+        } else {
+            this.status.textContent = "Select an element";
+
+            this.renderEmptyDetails();
+        }
+    }
+
+    updatePickingUI() {
         this.pickButton.classList.toggle("active", this.picking);
-        this.pickButton.textContent = this.picking ? "TAP AN ELEMENT…" : "PICK ELEMENT";
+
+        this.pickButton.textContent = this.picking
+            ? "CANCEL PICKING"
+            : "PICK ELEMENT";
+
         this.status.textContent = this.picking
-            ? "Tap an element on the page · Esc to cancel"
-            : this.selectedElement
-                ? this.describeElement(this.selectedElement)
-                : "Select an element";
-        document.documentElement.classList.toggle("dom-inspector-picking", this.picking);
+            ? "Tap an element on the page to inspect it."
+            : this.selectedDetails
+              ? this.describeDetails(this.selectedDetails)
+              : "Select an element";
     }
 
-    refresh() {
-        const previous = this.selectedElement;
-        this.nodeCount = 0;
-        this.elementsById.clear();
+    // --------------------------------------------------
+    // Tree rendering
+    // --------------------------------------------------
+
+    renderTree() {
         this.tree.replaceChildren();
 
-        const root = document.createElement("div");
-        root.className = "dom-tree-node dom-tree-root";
-        root.appendChild(this.createTreeRow(document.body, "body", true));
-
-        const children = document.createElement("div");
-        children.className = "dom-tree-children";
-        for (const child of this.inspectableChildren(document.body)) {
-            if (this.nodeCount >= this.maxNodes) break;
-            children.appendChild(this.buildNode(child, 1));
-        }
-        root.appendChild(children);
-        this.tree.appendChild(root);
-
-        if (this.nodeCount >= this.maxNodes) {
-            const note = document.createElement("div");
-            note.className = "dom-inspector-limit";
-            note.textContent = `Tree limited to ${this.maxNodes} elements. Refresh after narrowing the page if needed.`;
-            this.tree.appendChild(note);
+        if (!this.treeData) {
+            return;
         }
 
-        if (previous && previous.isConnected && !this.consoleElement.contains(previous)) {
-            this.selectElement(previous, { reveal: false });
-        } else {
-            this.selectedElement = null;
-            this.highlight.hidden = true;
-            this.details.innerHTML = '<p class="dom-inspector-empty">Choose an element from the tree or use PICK ELEMENT.</p>';
-            this.status.textContent = "Select an element";
-        }
+        this.tree.appendChild(this.createTreeNode(this.treeData, true));
     }
 
-    inspectableChildren(parent) {
-        return Array.from(parent.children).filter(element => {
-            if (element === this.consoleElement || this.consoleElement.contains(element)) return false;
-            return true;
-        });
-    }
-
-    buildNode(element, depth) {
-        this.nodeCount++;
+    createTreeNode(data, expanded = false) {
         const node = document.createElement("div");
+
         node.className = "dom-tree-node";
-        node.dataset.domElementId = this.getElementId(element);
-        node.appendChild(this.createTreeRow(element, this.describeElement(element), false));
+        node.dataset.domElementId = data.id;
 
-        const children = this.inspectableChildren(element);
-        if (children.length && depth < 40 && this.nodeCount < this.maxNodes) {
-            const toggle = node.querySelector("[data-dom-toggle]");
-            toggle.setAttribute("aria-expanded", "false");
-            toggle.textContent = "▸";
+        const row = document.createElement("div");
+        row.className = "dom-tree-row";
 
+        const toggle = document.createElement("button");
+
+        toggle.type = "button";
+        toggle.className = "dom-tree-toggle";
+        toggle.dataset.domToggle = "true";
+        toggle.setAttribute("aria-label", "Expand or collapse children");
+
+        const hasChildren =
+            Array.isArray(data.children) && data.children.length > 0;
+
+        toggle.disabled = !hasChildren;
+        toggle.classList.toggle("no-children", !hasChildren);
+
+        toggle.setAttribute("aria-expanded", String(hasChildren && expanded));
+
+        toggle.textContent = !hasChildren ? "·" : expanded ? "▾" : "▸";
+
+        row.appendChild(toggle);
+
+        const select = document.createElement("button");
+
+        select.type = "button";
+        select.className = "dom-tree-select";
+        select.dataset.domSelect = data.id;
+        select.textContent = data.label;
+        select.title = data.label;
+
+        row.appendChild(select);
+        node.appendChild(row);
+
+        if (hasChildren) {
             const branch = document.createElement("div");
-            branch.className = "dom-tree-children";
-            branch.hidden = true;
 
-            for (const child of children) {
-                if (this.nodeCount >= this.maxNodes) break;
-                branch.appendChild(this.buildNode(child, depth + 1));
+            branch.className = "dom-tree-children";
+            branch.hidden = !expanded;
+
+            for (const child of data.children) {
+                branch.appendChild(this.createTreeNode(child, false));
             }
+
             node.appendChild(branch);
-        } else {
-            const toggle = node.querySelector("[data-dom-toggle]");
-            toggle.textContent = "·";
-            toggle.disabled = true;
-            toggle.classList.add("no-children");
         }
 
         return node;
     }
 
-    createTreeRow(element, label, root) {
-        const row = document.createElement("div");
-        row.className = "dom-tree-row";
+    toggleBranch(toggle) {
+        const node = toggle.closest(".dom-tree-node");
 
-        const toggle = document.createElement("button");
-        toggle.type = "button";
-        toggle.className = "dom-tree-toggle";
-        toggle.dataset.domToggle = "true";
-        toggle.setAttribute("aria-label", "Expand or collapse children");
-        toggle.setAttribute("aria-expanded", root ? "true" : "false");
-        toggle.textContent = root ? "▾" : "▸";
-        row.appendChild(toggle);
+        const branch = node?.querySelector(":scope > .dom-tree-children");
 
-        const select = document.createElement("button");
-        select.type = "button";
-        select.className = "dom-tree-select";
-        select.dataset.domSelect = this.getElementId(element);
-        select.textContent = label;
-        select.title = label;
-        row.appendChild(select);
-        return row;
-    }
-
-    getElementId(element) {
-        let id = this.elementIds.get(element);
-        if (!id) {
-            id = `dom-${this.nextElementId++}`;
-            this.elementIds.set(element, id);
+        if (!branch) {
+            return;
         }
-        this.elementsById.set(id, element);
-        return id;
+
+        const expanded = toggle.getAttribute("aria-expanded") === "true";
+
+        toggle.setAttribute("aria-expanded", String(!expanded));
+
+        branch.hidden = expanded;
+        toggle.textContent = expanded ? "▸" : "▾";
     }
 
-    elementById(id) {
-        const element = this.elementsById.get(id);
-        return element?.isConnected && !this.consoleElement.contains(element) ? element : null;
-    }
+    findNode(node, id) {
+        if (!node) {
+            return null;
+        }
 
-    describeElement(element) {
-        const tag = element.tagName.toLowerCase();
-        const id = element.id ? `#${element.id}` : "";
-        const classes = Array.from(element.classList).slice(0, 3).map(name => `.${name}`).join("");
-        return `${tag}${id}${classes}`;
-    }
+        if (node.id === id) {
+            return node;
+        }
 
-    selectElement(element, { reveal = false } = {}) {
-        if (!(element instanceof Element) || this.consoleElement.contains(element)) return;
-        this.selectedElement = element;
+        for (const child of node.children || []) {
+            const found = this.findNode(child, id);
 
-        this.tree.querySelectorAll(".dom-tree-select.selected").forEach(button => button.classList.remove("selected"));
-        const selectedId = this.getElementId(element);
-        const button = Array.from(this.tree.querySelectorAll("[data-dom-select]"))
-            .find(item => item.dataset.domSelect === selectedId);
-
-        if (button) {
-            button.classList.add("selected");
-            if (reveal) {
-                let branch = button.closest(".dom-tree-children");
-                while (branch && branch !== this.tree) {
-                    branch.hidden = false;
-                    const parentNode = branch.parentElement?.closest(".dom-tree-node");
-                    const toggle = parentNode?.querySelector(":scope > .dom-tree-row [data-dom-toggle]");
-                    if (toggle) {
-                        toggle.textContent = "▾";
-                        toggle.setAttribute("aria-expanded", "true");
-                    }
-                    branch = parentNode?.parentElement?.closest(".dom-tree-children") || null;
-                }
-                const scroller = button.closest(".dom-tree-scroll");
-                if (scroller) {
-                    const itemRect = button.getBoundingClientRect();
-                    const scrollRect = scroller.getBoundingClientRect();
-                    if (itemRect.top < scrollRect.top) scroller.scrollTop -= scrollRect.top - itemRect.top;
-                    else if (itemRect.bottom > scrollRect.bottom) scroller.scrollTop += itemRect.bottom - scrollRect.bottom;
-                }
+            if (found) {
+                return found;
             }
         }
 
-        this.status.textContent = this.describeElement(element);
-        this.renderDetails(element);
-        this.updateHighlight();
+        return null;
     }
 
-    renderDetails(element) {
+    countNodes(node) {
+        if (!node) {
+            return 0;
+        }
+
+        return (
+            1 +
+            (node.children || []).reduce(
+                (count, child) => count + this.countNodes(child),
+                0
+            )
+        );
+    }
+
+    revealNode(id) {
+        const button = Array.from(
+            this.tree.querySelectorAll("[data-dom-select]")
+        ).find(item => item.dataset.domSelect === id);
+
+        if (!button) {
+            return;
+        }
+
+        let branch = button.closest(".dom-tree-children");
+
+        while (branch && branch !== this.tree) {
+            branch.hidden = false;
+
+            const parentNode = branch.parentElement?.closest(".dom-tree-node");
+
+            const toggle = parentNode?.querySelector(
+                ":scope > .dom-tree-row [data-dom-toggle]"
+            );
+
+            if (toggle) {
+                toggle.textContent = "▾";
+                toggle.setAttribute("aria-expanded", "true");
+            }
+
+            branch =
+                parentNode?.parentElement?.closest(".dom-tree-children") ||
+                null;
+        }
+
+        const scroller = this.tree;
+
+        const itemRect = button.getBoundingClientRect();
+        const scrollRect = scroller.getBoundingClientRect();
+
+        if (itemRect.top < scrollRect.top) {
+            scroller.scrollTop -= scrollRect.top - itemRect.top;
+        } else if (itemRect.bottom > scrollRect.bottom) {
+            scroller.scrollTop += itemRect.bottom - scrollRect.bottom;
+        }
+    }
+
+    renderSelectedState() {
+        this.tree
+            .querySelectorAll(".dom-tree-select.selected")
+            .forEach(button => {
+                button.classList.remove("selected");
+            });
+
+        if (!this.selectedId) {
+            return;
+        }
+
+        const button = Array.from(
+            this.tree.querySelectorAll("[data-dom-select]")
+        ).find(item => item.dataset.domSelect === this.selectedId);
+
+        button?.classList.add("selected");
+    }
+
+    // --------------------------------------------------
+    // Details rendering
+    // --------------------------------------------------
+
+    renderDetails(details) {
         this.details.replaceChildren();
+
+        const element = details.element || {};
+        const layout = details.layout || {};
+        const style = details.computedStyle || {};
+
         this.addDetailSection("ELEMENT", [
-            ["Tag", element.tagName.toLowerCase()],
+            ["Tag", element.tag || "—"],
             ["ID", element.id || "—"],
-            ["Classes", element.className && typeof element.className === "string" ? element.className : "—"],
-            ["Text", (element.innerText || element.textContent || "").trim().replace(/\s+/g, " ").slice(0, 240) || "—"]
+            ["Classes", element.className || "—"],
+            ["Text", element.text || "—"]
         ]);
 
-        const rect = element.getBoundingClientRect();
         this.addDetailSection("LAYOUT", [
-            ["Position", `${Math.round(rect.left)}, ${Math.round(rect.top)}`],
-            ["Size", `${Math.round(rect.width)} × ${Math.round(rect.height)}`]
+            ["Position", `${layout.x ?? "—"}, ${layout.y ?? "—"}`],
+            ["Size", `${layout.width ?? "—"} × ${layout.height ?? "—"}`],
+            ["CSS position", layout.position || "—"]
         ]);
 
-        const style = getComputedStyle(element);
         this.addDetailSection("COMPUTED STYLE", [
-            ["display", style.display],
-            ["position", style.position],
-            ["color", style.color],
-            ["background", style.backgroundColor],
-            ["font-size", style.fontSize],
-            ["margin", style.margin],
-            ["padding", style.padding],
-            ["overflow", style.overflow]
+            ["display", style.display || "—"],
+            ["position", style.position || "—"],
+            ["color", style.color || "—"],
+            ["background", style.backgroundColor || "—"],
+            ["font-size", style.fontSize || "—"],
+            ["font-family", style.fontFamily || "—"],
+            ["font-weight", style.fontWeight || "—"],
+            ["margin", style.margin || "—"],
+            ["padding", style.padding || "—"],
+            ["overflow", style.overflow || "—"],
+            ["opacity", style.opacity || "—"]
         ]);
 
-        const attributes = Array.from(element.attributes).map(attribute => [attribute.name, attribute.value]);
-        if (attributes.length) this.addDetailSection("ATTRIBUTES", attributes);
+        if (details.attributes?.length) {
+            this.addDetailSection(
+                "ATTRIBUTES",
+                details.attributes.map(attribute => [
+                    attribute.name,
+                    attribute.value
+                ])
+            );
+        }
     }
 
     addDetailSection(title, rows) {
         const section = document.createElement("section");
         section.className = "dom-detail-section";
+
         const heading = document.createElement("h4");
         heading.textContent = title;
+
         section.appendChild(heading);
 
         const list = document.createElement("dl");
+
         for (const [name, value] of rows) {
             const term = document.createElement("dt");
             term.textContent = name;
+
             const description = document.createElement("dd");
-            description.textContent = String(value);
+            description.textContent = String(value ?? "—");
+
             list.append(term, description);
         }
+
         section.appendChild(list);
         this.details.appendChild(section);
     }
 
-    updateHighlight() {
-        if (!this.selectedElement?.isConnected || this.selectedElement === document.body) {
-            this.highlight.hidden = true;
+    renderEmptyDetails() {
+        this.details.replaceChildren();
+
+        const message = document.createElement("p");
+        message.className = "dom-inspector-empty";
+        message.textContent =
+            "Choose an element from the tree or use PICK ELEMENT.";
+
+        this.details.appendChild(message);
+    }
+
+    describeDetails(details) {
+        const element = details?.element;
+
+        if (!element) {
+            return "Select an element";
+        }
+
+        let label = element.tag || "element";
+
+        if (element.id) {
+            label += `#${element.id}`;
+        }
+
+        if (element.className) {
+            label +=
+                "." +
+                element.className.trim().split(/\s+/).slice(0, 3).join(".");
+        }
+
+        return label;
+    }
+
+    showError(error) {
+        this.details.replaceChildren();
+
+        const message = document.createElement("p");
+        message.className = "dom-inspector-empty";
+        message.textContent = error?.message || String(error);
+
+        this.details.appendChild(message);
+    }
+
+    // --------------------------------------------------
+    // Cleanup
+    // --------------------------------------------------
+
+    destroy() {
+        if (this.destroyed) {
             return;
         }
 
-        const rect = this.selectedElement.getBoundingClientRect();
-        this.highlight.hidden = false;
-        Object.assign(this.highlight.style, {
-            left: `${rect.left}px`,
-            top: `${rect.top}px`,
-            width: `${Math.max(0, rect.width)}px`,
-            height: `${Math.max(0, rect.height)}px`
-        });
-    }
+        this.destroyed = true;
+        this.refreshVersion++;
 
-    destroy() {
-        this.setPicking(false);
-        document.removeEventListener("pointerdown", this.onPointerDown, true);
-        document.removeEventListener("keydown", this.onKeyDown, true);
-        document.removeEventListener("scroll", this.onViewportChange, true);
-        window.removeEventListener("resize", this.onViewportChange);
-        this.highlight?.remove();
+        window.removeEventListener(
+            "devtools-inspect-event",
+            this.onInspectorEvent
+        );
+
+        if (this.picking) {
+            window.parentDOMInspector
+                ?.request("cancel-picking")
+                .catch(() => {});
+        }
+
+        this.picking = false;
+        this.treeData = null;
+        this.selectedDetails = null;
+        this.selectedId = null;
+
+        this.panel.replaceChildren();
     }
 }

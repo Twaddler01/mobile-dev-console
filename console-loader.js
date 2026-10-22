@@ -1,4 +1,5 @@
 import Console from "./Console.js";
+import DOMInspectorHost from "./DOMInspectorHost.js";
 
 const CONSOLE_SOURCE = "mobile-dev-console";
 
@@ -262,6 +263,92 @@ function createEmbeddedConsole({
         }
 
         frame.contentWindow?.postMessage(payload, targetOrigin);
+    }
+
+    let inspectorHost = null;
+
+    function sendInspectorEvent(event, payload = {}) {
+        postToFrame({
+            type: "inspect-event",
+            event,
+            payload
+        });
+    }
+
+    inspectorHost = new DOMInspectorHost({
+        document: window.document,
+        mountElement: host,
+
+        onPick({ id, details }) {
+            sendInspectorEvent("picked", { id, details });
+        },
+
+        onPickCancelled() {
+            sendInspectorEvent("pick-cancelled");
+        },
+
+        onSelectionChange({ id, details }) {
+            sendInspectorEvent("selection-changed", {
+                id,
+                details
+            });
+        }
+    });
+
+    function handleInspectorRequest(message) {
+        const { requestId, action, payload = {} } = message;
+
+        try {
+            let result;
+
+            switch (action) {
+                case "get-tree":
+                    result = inspectorHost.getTree();
+                    break;
+
+                case "get-details":
+                    result = inspectorHost.getDetails(payload.id);
+                    break;
+
+                case "select":
+                    result = inspectorHost.select(payload.id);
+                    break;
+
+                case "clear-selection":
+                    inspectorHost.clearSelection();
+                    result = true;
+                    break;
+
+                case "start-picking":
+                    inspectorHost.startPicking();
+                    result = true;
+                    break;
+
+                case "cancel-picking":
+                    inspectorHost.cancelPicking();
+                    result = true;
+                    break;
+
+                default:
+                    throw new Error(`Unknown inspector action: ${action}`);
+            }
+
+            postToFrame({
+                type: "inspect-response",
+                requestId,
+                action,
+                ok: true,
+                result
+            });
+        } catch (error) {
+            postToFrame({
+                type: "inspect-response",
+                requestId,
+                action,
+                ok: false,
+                error: error?.message || String(error)
+            });
+        }
     }
 
     function flushQueue() {
@@ -546,6 +633,10 @@ function createEmbeddedConsole({
         if (data.type === "suite-registration-error") {
             send("error", ["[TESTS] Suite registration failed:", data.message]);
         }
+
+        if (data.type === "inspect-request") {
+            handleInspectorRequest(data);
+        }
     }
 
     window.addEventListener("message", onMessage);
@@ -653,6 +744,8 @@ function createEmbeddedConsole({
             pendingRegistryRequests.clear();
             suites.clear();
             queue.length = 0;
+
+            inspectorHost?.destroy();
 
             host.remove();
 

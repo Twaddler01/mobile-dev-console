@@ -57,6 +57,31 @@
             let devConsole;
             let pendingSettings = null;
 
+            const pendingInspectorRequests = new Map();
+            let nextInspectorRequestId = 1;
+
+            function requestParentInspection(action, payload = {}) {
+                const requestId = `inspect-${nextInspectorRequestId++}`;
+
+                return new Promise((resolve, reject) => {
+                    pendingInspectorRequests.set(requestId, {
+                        resolve,
+                        reject
+                    });
+
+                    postToParent({
+                        type: "inspect-request",
+                        requestId,
+                        action,
+                        payload
+                    });
+                });
+            }
+
+            window.parentDOMInspector = Object.freeze({
+                request: requestParentInspection
+            });
+
             function postToParent(message) {
                 window.parent.postMessage(
                     {
@@ -246,6 +271,41 @@
                         }
 
                         return;
+
+                    case "inspect-response": {
+                        const pending = pendingInspectorRequests.get(
+                            data.requestId
+                        );
+
+                        if (!pending) {
+                            break;
+                        }
+
+                        pendingInspectorRequests.delete(data.requestId);
+
+                        if (data.ok) {
+                            pending.resolve(data.result);
+                        } else {
+                            pending.reject(
+                                new Error(
+                                    data.error || "Parent inspection failed."
+                                )
+                            );
+                        }
+
+                        break;
+                    }
+
+                    case "inspect-event":
+                        window.dispatchEvent(
+                            new CustomEvent("devtools-inspect-event", {
+                                detail: {
+                                    event: data.event,
+                                    payload: data.payload || {}
+                                }
+                            })
+                        );
+                        break;
                 }
             }
 

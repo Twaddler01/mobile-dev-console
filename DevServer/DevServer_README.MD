@@ -75,7 +75,7 @@ git --version
 
 Clone the repository or navigate to your existing project directory.
 ```bash
-git clone https://github.com
+git clone https://github.com/Twaddler01/mobile-dev-console
 cd mobile-dev-console
 ```
 

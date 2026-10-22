@@ -8,6 +8,7 @@ export default class Console {
         this.element = document.getElementById("consoleLog");
 
         this.settings = {
+            mode: settings.mode ?? "overlay",
             captureConsole: settings.captureConsole ?? true,
             mirrorToNative: settings.mirrorToNative ?? false,
             showCopyButtons: settings.showCopyButtons ?? false,
@@ -269,6 +270,7 @@ export default class Console {
         this.refreshButton = this.element.querySelector("#consoleRefresh");
         this.positionButton = this.element.querySelector("#consolePosition");
         this.toggleButton = this.element.querySelector("#consoleToggle");
+        this.positionButton.hidden = this.settings.mode === "embedded";
     }
 
     // ==========================================
@@ -496,7 +498,10 @@ export default class Console {
         );
         this.positionButton.title = label;
 
-        this.dragHandle.hidden = this.isDocked;
+        const embedded = this.settings.mode === "embedded";
+
+        this.positionButton.hidden = embedded;
+        this.dragHandle.hidden = embedded || this.isDocked;
     }
 
     updateToggleButton(collapsed) {
@@ -531,6 +536,7 @@ export default class Console {
 
         const onPointerDown = event => {
             if (
+                this.settings.mode === "embedded" ||
                 this.isDocked ||
                 (event.button !== 0 && event.pointerType === "mouse")
             ) {

@@ -255,6 +255,7 @@
                 const { default: Console } = await import("./Console.js");
 
                 devConsole = new Console({
+                    mode: "embedded",
                     captureConsole: false,
                     mirrorToNative: false,
                     showCopyButtons: false,

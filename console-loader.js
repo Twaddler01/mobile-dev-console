@@ -66,6 +66,7 @@ function createOverlayConsole({
 
     try {
         consoleInstance = new Console({
+            mode: "overlay",
             captureConsole,
             mirrorToNative,
             showCopyButtons,

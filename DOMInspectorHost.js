@@ -63,85 +63,83 @@ export default class DOMInspectorHost {
     // DOM tree
     // --------------------------------------------------
 
-    
-getTree() {
-    this.nodeCount = 0;
+    getTree() {
+        this.nodeCount = 0;
 
-    const body = this.document.body;
+        const body = this.document.body;
 
-    if (!body) {
-        return null;
-    }
-
-    // Always retain body as the root, even if it contains
-    // the DevTools mount point.
-    this.nodeCount++;
-
-    const children = [];
-
-    for (const child of body.children) {
-        if (this.nodeCount >= this.maxNodes) {
-            break;
+        if (!body) {
+            return null;
         }
 
-        const node = this.buildNode(child, 1);
+        // Always retain body as the root, even if it contains
+        // the DevTools mount point.
+        this.nodeCount++;
 
-        if (node) {
-            children.push(node);
-        }
-    }
+        const children = [];
 
-    return {
-        id: this.getElementId(body),
-        label: this.describeElement(body),
-        tag: "body",
-        elementId: body.id || "",
-        className: this.getClassName(body),
-        hasChildren: children.length > 0,
-        children
-    };
-}
-
-buildNode(element, depth) {
-    if (
-        !element ||
-        element.nodeType !== 1 ||
-        this.isExcluded(element) ||
-        this.nodeCount >= this.maxNodes
-    ) {
-        return null;
-    }
-
-    this.nodeCount++;
-
-    const id = this.getElementId(element);
-    const children = [];
-
-    if (depth < this.maxDepth) {
-        for (const child of element.children) {
+        for (const child of body.children) {
             if (this.nodeCount >= this.maxNodes) {
                 break;
             }
 
-            const node = this.buildNode(child, depth + 1);
+            const node = this.buildNode(child, 1);
 
             if (node) {
                 children.push(node);
             }
         }
+
+        return {
+            id: this.getElementId(body),
+            label: this.describeElement(body),
+            tag: "body",
+            elementId: body.id || "",
+            className: this.getClassName(body),
+            hasChildren: children.length > 0,
+            children
+        };
     }
 
-    return {
-        id,
-        label: this.describeElement(element),
-        tag: element.tagName.toLowerCase(),
-        elementId: element.id || "",
-        className: this.getClassName(element),
-        hasChildren: element.children.length > 0,
-        children
-    };
-}
+    buildNode(element, depth) {
+        if (
+            !element ||
+            element.nodeType !== 1 ||
+            this.isExcluded(element) ||
+            this.nodeCount >= this.maxNodes
+        ) {
+            return null;
+        }
 
+        this.nodeCount++;
+
+        const id = this.getElementId(element);
+        const children = [];
+
+        if (depth < this.maxDepth) {
+            for (const child of element.children) {
+                if (this.nodeCount >= this.maxNodes) {
+                    break;
+                }
+
+                const node = this.buildNode(child, depth + 1);
+
+                if (node) {
+                    children.push(node);
+                }
+            }
+        }
+
+        return {
+            id,
+            label: this.describeElement(element),
+            tag: element.tagName.toLowerCase(),
+            elementId: element.id || "",
+            className: this.getClassName(element),
+            hasChildren: element.children.length > 0,
+            children
+        };
+    }
 
     getElementId(element) {
         let id = this.elementIds.get(element);
@@ -190,51 +188,42 @@ buildNode(element, depth) {
         return element.getAttribute("class") || "";
     }
 
-    
-isExcluded(element) {
-    if (!element || element.nodeType !== 1) {
-        return true;
-    }
+    isExcluded(element) {
+        if (!element || element.nodeType !== 1) {
+            return true;
+        }
 
-    if (element.closest?.("[data-devtools-pick-cancel]")) {
-        return true;
-    }
+        if (element.closest?.("[data-devtools-pick-cancel]")) {
+            return true;
+        }
 
-    // Exclude the supplied mount element and its descendants.
-    if (
-        this.mountElement &&
-        (
-            element === this.mountElement ||
-            this.mountElement.contains(element)
-        )
-    ) {
-        return true;
-    }
+        // Exclude the supplied mount element and its descendants.
+        if (
+            this.mountElement &&
+            (element === this.mountElement ||
+                this.mountElement.contains(element))
+        ) {
+            return true;
+        }
 
-    // Exclude the console's outer mount container, too.
-    if (
-        element.id === "devtools"
-    ) {
-        return true;
-    }
-    
-    if (
-        element.hasAttribute(
-            "data-dom-inspector-highlight"
-        )
-    ) {
-        return true;
-    }
+        // Exclude the console's outer mount container, too.
+        if (element.id === "devtools") {
+            return true;
+        }
 
-    return [
-        "SCRIPT",
-        "STYLE",
-        "LINK",
-        "META",
-        "TITLE",
-        "NOSCRIPT"
-    ].includes(element.tagName);
-}
+        if (element.hasAttribute("data-dom-inspector-highlight")) {
+            return true;
+        }
+
+        return [
+            "SCRIPT",
+            "STYLE",
+            "LINK",
+            "META",
+            "TITLE",
+            "NOSCRIPT"
+        ].includes(element.tagName);
+    }
 
     // --------------------------------------------------
     // Element details
@@ -418,6 +407,7 @@ isExcluded(element) {
 
         const target = event.target;
 
+        // Taps outside the inspectable project area cancel picking.
         if (
             !target ||
             target.nodeType !== 1 ||
@@ -425,22 +415,20 @@ isExcluded(element) {
             target === this.document.body ||
             this.isExcluded(target)
         ) {
+            this.cancelPicking();
             return;
         }
 
-        // Picking must not also activate the page underneath.
+        // Select the element without activating the underlying page.
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
 
         const id = this.getElementId(target);
-
-        this.picking = false;
-
-        this.document.documentElement.classList.remove("dom-inspector-picking");
-
         const details = this.select(id);
 
+        // IMPORTANT: do not clear this.picking here.
+        // The user can select another element immediately.
         this.onPick?.({
             id,
             details

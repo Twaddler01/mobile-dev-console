@@ -126,6 +126,25 @@ export default class DOMInspector {
             this.setPicking(!this.picking);
         });
 
+        document.addEventListener(
+            "pointerdown",
+            (this.onPickingPointerDown = event => {
+                if (!this.picking) return;
+
+                // The existing toggle button remains interactive.
+                if (
+                    event.target === this.pickButton ||
+                    this.pickButton.contains(event.target)
+                ) {
+                    return;
+                }
+
+                // Any other interaction inside the console cancels picking.
+                this.setPicking(false);
+            }),
+            true
+        );
+
         this.refreshButton.addEventListener("click", () => {
             this.refresh();
         });
@@ -323,22 +342,20 @@ export default class DOMInspector {
     }
 
     async handlePicked({ id, details }) {
-        this.picking = false;
-        this.updatePickingUI();
-
-        if (!id) {
-            return;
-        }
+        if (!id) return;
 
         this.selectedId = id;
         this.selectedDetails = details || null;
 
-        // The picked element might not be in the current tree
-        // if the page changed after the last refresh.
         await this.refresh({
             selectedId: id,
             reveal: true
         });
+
+        // Refreshing and selecting must not end picking mode.
+        if (this.picking) {
+            this.updatePickingUI();
+        }
     }
 
     handleSelectionChanged({ id, details }) {
@@ -348,9 +365,9 @@ export default class DOMInspector {
         this.renderSelectedState();
 
         if (details) {
-            this.status.textContent = this.describeDetails(details);
-
-            this.renderDetails(details);
+            this.status.textContent = this.picking
+                ? "Tap another project element · Cancel to stop"
+                : this.describeDetails(details);
         } else {
             this.status.textContent = "Select an element";
 
@@ -365,8 +382,18 @@ export default class DOMInspector {
             ? "CANCEL PICKING"
             : "PICK ELEMENT";
 
+        // Keep the picking toggle interactive, but disable other
+        // inspector controls while picking is active.
+        this.refreshButton.style.pointerEvents = this.picking ? "none" : "";
+
+        const workspace = this.panel.querySelector(".dom-inspector-workspace");
+
+        if (workspace) {
+            workspace.style.pointerEvents = this.picking ? "none" : "";
+        }
+
         this.status.textContent = this.picking
-            ? "Tap an element on the page to inspect it."
+            ? "Tap project elements to inspect them · Cancel to stop"
             : this.selectedDetails
               ? this.describeDetails(this.selectedDetails)
               : "Select an element";
@@ -698,5 +725,11 @@ export default class DOMInspector {
         this.selectedId = null;
 
         this.panel.replaceChildren();
+
+        document.removeEventListener(
+            "pointerdown",
+            this.onPickingPointerDown,
+            true
+        );
     }
 }

@@ -1,11 +1,16 @@
 # ABOUT
 A lightweight, mobile-friendly JavaScript developer console for browser and WebView applications, featuring runtime error reporting, command execution, and debugging tools.
 
-# WIP
-- New UI design and new features.
-- DevServer: functional, readne created.
-- Need integrated config option for UI to show as "overlay" or embedded in iFrame at end of page(s).
-- Bridge to iFrame mostly working.
+# WIP (v1.1)
+- Clean-up INSPECT (toggling).
+- Add ability to swap console ui between "embedded" and "overlay" modes.
 
-# STATUS
-- Still in developmemt.
+# USAGE
+
+URL(s) available below for online module import (v1.0.0 initial release).
+
+### Catch errors outside of mobile-dev-console
+https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/errorBootstrap.js
+
+### Main module script
+https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/DevTools.js

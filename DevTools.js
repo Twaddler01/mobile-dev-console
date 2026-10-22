@@ -1,4 +1,4 @@
-import { createConsoleHost } from "../mobile-dev-console/console-loader.js";
+import { createConsoleHost } from "./console-loader.js";
 
 /**
  * Public drop-in API for mobile-dev-console.

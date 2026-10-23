@@ -4,7 +4,7 @@ A lightweight, mobile-friendly JavaScript developer console for browser and WebV
 
 `mobile-dev-console` provides an in-app debugging interface with console output, runtime error reporting, DOM inspection, and test tools. It can run as an **embedded console** or a **draggable overlay**, making it useful for development on desktop browsers, mobile browsers, and WebView-based applications.
 
-> **Project status:** v1.0.0 is the initial online release. v1.0.1 is currently in progress.
+> **Project status:** v1.0.1 is the newest release. v1.0.2 is currently in progress.
 
 ## Features
 
@@ -32,18 +32,18 @@ A lightweight, mobile-friendly JavaScript developer console for browser and WebV
 
 ## Installation and CDN URLs
 
-The initial release is available through GitHub Pages.
+Each release is available through GitHub Pages.
 
 | Module | URL |
 |---|---|
-| Main module | `https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/DevTools.js` |
-| Error bootstrap | `https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/errorBootstrap.js` |
+| Main module | `https://twaddler01.github.io/mobile-dev-console/releases/v1.0.1/DevTools.js` |
+| Error bootstrap | `https://twaddler01.github.io/mobile-dev-console/releases/v1.0.1/errorBootstrap.js` |
 
 The main module is an ES module. Load it using `import()` or a `<script type="module">` block.
 
 The error bootstrap is a separate, regular JavaScript script and should be loaded before your application initializes.
 
-**Note:** These URLs point to v1.0.0. Features or fixes developed for v1.0.1 are not available from these URLs until a new release is published.
+**Note:** These URLs point to v1.0.1. Features or fixes developed for v1.0.2 are not available from these URLs until a new release is published.
 
 ## Quick start
 
@@ -70,12 +70,12 @@ The following example initializes the console before loading your application en
     <div id="devtools"></div>
 
     <!-- Install error listeners before application startup -->
-    <script src="https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/errorBootstrap.js"></script>
+    <script src="https://twaddler01.github.io/mobile-dev-console/releases/v1.0.1/errorBootstrap.js"></script>
 
     <script type="module">
         try {
             const { DevTools } = await import(
-                "https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/DevTools.js"
+                "https://twaddler01.github.io/mobile-dev-console/releases/v1.0.1/DevTools.js"
             );
 
             const devTools = DevTools.mount({
@@ -280,8 +280,8 @@ The bootstrap complements this startup error handling; it does not guarantee tha
 
 **Release example page** [GitHub Pages index.html](https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/)
 
-**Bootstrap CDN Link** [https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/errorBootstrap.js](https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/errorBootstrap.js)
+**Bootstrap CDN Link** [https://twaddler01.github.io/mobile-dev-console/releases/v1.0.1/errorBootstrap.js](https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/errorBootstrap.js)
 
-**DevTools CDN Link** [https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/DevTools.js](https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/DevTools.js)
+**DevTools CDN Link** [https://twaddler01.github.io/mobile-dev-console/releases/v1.0.1/DevTools.js](https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/DevTools.js)
 
 Contributions, bug reports, and suggestions for improving mobile debugging workflows are welcome.

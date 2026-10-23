@@ -245,7 +245,7 @@ The bootstrap complements this startup error handling; it does not guarantee tha
 
 ## Development roadmap
 
-### Short term — v1.0.1
+### Short term — v1.0.2
 
 * Persist console settings using `localStorage`.
 * Continue improving inspector toggling and overlay behavior.
@@ -260,7 +260,9 @@ The bootstrap complements this startup error handling; it does not guarantee tha
 
 ## Version history
 
-### v1.0.1 — In progress
+### v1.0.2 — In progress
+
+### v1.0.1
 
 - Added support for switching between embedded and overlay console modes.
 - Simplified inspector toggling.

@@ -17,28 +17,7 @@ export function mountDevTools(options = {}) {
     return DevTools.mount(options);
 }
 
-
-
-
-// DEBUG
-function debug() {
-    setTimeout(() => {
-
-
-
-        
-
-        
-        
-    }, 10000);
-}
-debug();
-
-
-
-
 export default DevTools;
-
 
 /*
 // Default: embedded iframe in #devtools, height 60dvh.

@@ -4,16 +4,14 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>mobile-dev-console</title>
-        <link rel="stylesheet" href="./console.css" />
     </head>
-
     <body>
         <!-- Needed for console elements. -->
         <div id="productionErrorLog"></div>
-        <div id="consoleLog"></div>
+        <div id="devtools"></div>
 
         <!-- For TestEnvironment / your other scripts -->
-        <div id="main" style="flex: 1"></div>
+        <div id="main""></div>
 
         <!-- Install error listeners first. -->
         <script src="./errorBootstrap.js"></script>
@@ -21,9 +19,14 @@
         <!-- Initialize the console before integrations and the application. -->
         <script type="module">
             try {
-                const { default: Console } = await import("./Console.js");
+                const { default: DevTools } =
+                    await import("./DevTools.js");
 
-                new Console({
+                const devTools = DevTools.mount({
+                    
+                    mode: "embedded",
+                    mountPoint: "#devtools",
+                    height: "60dvh",
                     captureConsole: true,
                     mirrorToNative: false,
                     showCopyButtons: false,

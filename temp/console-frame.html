@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Developer Console</title>
+        <link rel="stylesheet" href="./console.css" />
+
+        <style>
+            html,
+            body {
+                margin: 0;
+                padding: 0;
+                width: 100%;
+                height: 100%;
+                overflow: hidden;
+            }
+
+            /* Layout comes from .mdc-root.mdc-embedded (added by Console.js).
+               The frame only has to give it a full-size box. */
+            #consoleLog {
+                width: 100%;
+                height: 100%;
+            }
+        </style>
+    </head>
+
+    <body>
+        <div id="productionErrorLog"></div>
+        <div id="consoleLog"></div>
+
+        <script src="./errorBootstrap.js"></script>
+
+        <script type="module">
+            const CONSOLE_SOURCE = "mobile-dev-console";
+
+            let trustedParentOrigin = null;
+
+            const allowedMethods = new Set([
+                "log",
+                "info",
+                "debug",
+                "warn",
+                "error",
+                "group",
+                "groupCollapsed",
+                "groupEnd",
+                "table",
+                "clear"
+            ]);
+
+            const pendingActions = new Map();
+            let nextActionRequestId = 0;
+            let devConsole;
+            let pendingSettings = null;
+
+            const pendingInspectorRequests = new Map();
+            let nextInspectorRequestId = 1;
+
+            function requestParentInspection(action, payload = {}) {
+                const requestId = `inspect-${nextInspectorRequestId++}`;
+
+                return new Promise((resolve, reject) => {
+                    pendingInspectorRequests.set(requestId, {
+                        resolve,
+                        reject
+                    });
+
+                    postToParent({
+                        type: "inspect-request",
+                        requestId,
+                        action,
+                        payload
+                    });
+                });
+            }
+
+            window.parentDOMInspector = Object.freeze({
+                request: requestParentInspection
+            });
+
+            function postToParent(message) {
+                window.parent.postMessage(
+                    {
+                        source: CONSOLE_SOURCE,
+                        ...message
+                    },
+                    trustedParentOrigin ?? "*"
+                );
+            }
+
+            function requestParentAction(suiteId, actionId) {
+                return new Promise((resolve, reject) => {
+                    nextActionRequestId += 1;
+
+                    const requestId = `frame-action-${nextActionRequestId}`;
+
+                    pendingActions.set(requestId, { resolve, reject });
+
+                    postToParent({
+                        type: "console-action-request",
+                        requestId,
+                        suiteId,
+                        actionId
+                    });
+                });
+            }
+
+            function handleActionResult(data) {
+                const pending = pendingActions.get(data.requestId);
+                if (!pending) return;
+
+                pendingActions.delete(data.requestId);
+
+                if (data.ok) {
+                    pending.resolve(
+                        data.resultUndefined ? undefined : data.result
+                    );
+                    return;
+                }
+
+                const details = data.error || {};
+                const error = new Error(
+                    details.message || "The registered action failed."
+                );
+
+                error.name = details.name || "Error";
+
+                if (details.stack) {
+                    error.stack = details.stack;
+                }
+
+                pending.reject(error);
+            }
+
+            function handleSuiteRegistration(data) {
+                const suite = data.suite;
+
+                try {
+                    if (!suite || !Array.isArray(suite.actions)) {
+                        throw new TypeError(
+                            "Invalid suite registration message."
+                        );
+                    }
+
+                    const actions = suite.actions.map(action => ({
+                        id: action.id,
+                        label: action.label,
+                        description: action.description ?? "",
+
+                        // The callback itself stays in the parent application.
+                        // Only its suite/action IDs cross the bridge.
+                        run: () => requestParentAction(suite.id, action.id)
+                    }));
+
+                    devConsole.tests.registerSuite({
+                        id: suite.id,
+                        name: suite.name,
+                        description: suite.description ?? "",
+                        actions
+                    });
+                } catch (error) {
+                    postToParent({
+                        type: "suite-registration-error",
+                        suiteId: suite?.id,
+                        message: String(error?.message || error)
+                    });
+                }
+            }
+
+            function applyConsoleSettings() {
+                if (!devConsole || !pendingSettings) return false;
+
+                for (const [key, value] of Object.entries(pendingSettings)) {
+                    if (key in devConsole.settings) {
+                        devConsole.updateSetting(key, value);
+                    }
+                }
+
+                pendingSettings = null;
+                return true;
+            }
+
+            function handleMessage(event) {
+                if (event.source !== window.parent) return;
+                if (event.data?.source !== CONSOLE_SOURCE) return;
+
+                const data = event.data;
+
+                // Accept the first initialization message, then lock to that
+                // parent's origin for all subsequent messages.
+                if (trustedParentOrigin === null) {
+                    if (data.type !== "console-init") return;
+                    trustedParentOrigin = event.origin;
+                } else if (event.origin !== trustedParentOrigin) {
+                    return;
+                }
+
+                switch (data.type) {
+                    case "console-parent-connected":
+                        return;
+
+                    case "console-init":
+                        pendingSettings = data.settings ?? {};
+
+                        try {
+                            if (!applyConsoleSettings()) return;
+
+                            postToParent({
+                                type: "console-initialized"
+                            });
+                        } catch (error) {
+                            postToParent({
+                                type: "console-init-error",
+                                message: String(error?.stack || error)
+                            });
+                        }
+
+                        return;
+
+                    case "console-call": {
+                        if (!allowedMethods.has(data.method)) return;
+
+                        const args = Array.isArray(data.args) ? data.args : [];
+
+                        if (typeof devConsole[data.method] === "function") {
+                            devConsole[data.method](...args);
+                        } else if (
+                            data.method === "info" ||
+                            data.method === "debug"
+                        ) {
+                            devConsole.log(...args);
+                        }
+
+                        return;
+                    }
+
+                    case "suite-register":
+                        handleSuiteRegistration(data);
+                        return;
+
+                    case "suite-unregister":
+                        devConsole.tests.unregisterSuite(data.suiteId);
+                        return;
+
+                    case "console-action-result":
+                    case "action-result":
+                        handleActionResult(data);
+                        return;
+
+                    case "registry-get-suites":
+                        try {
+                            postToParent({
+                                type: "registry-suites-result",
+                                requestId: data.requestId,
+                                ok: true,
+                                suites: devConsole.tests.getSuites()
+                            });
+                        } catch (error) {
+                            postToParent({
+                                type: "registry-suites-result",
+                                requestId: data.requestId,
+                                ok: false,
+                                error: {
+                                    message: String(error?.message || error)
+                                }
+                            });
+                        }
+
+                        return;
+
+                    case "inspect-response": {
+                        const pending = pendingInspectorRequests.get(
+                            data.requestId
+                        );
+
+                        if (!pending) {
+                            break;
+                        }
+
+                        pendingInspectorRequests.delete(data.requestId);
+
+                        if (data.ok) {
+                            pending.resolve(data.result);
+                        } else {
+                            pending.reject(
+                                new Error(
+                                    data.error || "Parent inspection failed."
+                                )
+                            );
+                        }
+
+                        break;
+                    }
+
+                    case "inspect-event":
+                        document.getElementById("consoleLog")?.dispatchEvent(
+                            new CustomEvent("devtools-inspect-event", {
+                                detail: {
+                                    event: data.event,
+                                    payload: data.payload || {}
+                                }
+                            })
+                        );
+                        break;
+                }
+            }
+
+            window.addEventListener("message", handleMessage);
+
+            document.addEventListener("console-mode-toggle-request", () => {
+                postToParent({
+                    type: "console-mode-toggle-request"
+                });
+            });
+
+            const previousDevConsole = window.devConsole;
+
+            try {
+                const { default: Console } = await import("./Console.js");
+
+                devConsole = new Console({
+                    mode: "embedded",
+                    captureConsole: false,
+                    mirrorToNative: false,
+                    showCopyButtons: false,
+                    allowDragOutsideBounds: false,
+                    logTestOutput: true
+                });
+
+                applyConsoleSettings();
+
+                const consoleElement = document.getElementById("consoleLog");
+
+                consoleElement.addEventListener(
+                    "console-collapse-changed",
+                    event => {
+                        postToParent({
+                            type: "console-collapse-changed",
+                            collapsed: event.detail.collapsed
+                        });
+                    }
+                );
+
+                postToParent({ type: "console-ready" });
+            } catch (error) {
+                const message =
+                    error instanceof Error
+                        ? error.stack || error.message
+                        : String(error);
+
+                const errorLog = document.getElementById("productionErrorLog");
+
+                if (errorLog) {
+                    errorLog.textContent =
+                        "Console initialization failed: " + message;
+                }
+
+                postToParent({
+                    type: "console-init-error",
+                    message
+                });
+            }
+
+            window.addEventListener("pagehide", () => {
+                for (const pending of pendingActions.values()) {
+                    pending.reject(new Error("Console frame was unloaded."));
+                }
+
+                pendingActions.clear();
+
+                for (const pending of pendingInspectorRequests.values()) {
+                    pending.reject(new Error("Console frame was unloaded."));
+                }
+
+                pendingInspectorRequests.clear();
+
+                devConsole?.destroy?.();
+
+                if (devConsole && window.devConsole === devConsole) {
+                    if (previousDevConsole == null) {
+                        delete window.devConsole;
+                    } else {
+                        window.devConsole = previousDevConsole;
+                    }
+                }
+
+                delete window.parentDOMInspector;
+            });
+        </script>
+    </body>
+</html>
+
+

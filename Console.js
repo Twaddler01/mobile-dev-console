@@ -28,6 +28,15 @@ export default class Console {
         this.cleanupCallbacks = [];
         this.previousDevConsole = window.devConsole;
 
+        // The loader claims window.devConsole itself when it owns the
+        // lifecycle (overlay/embedded). Standalone use keeps the old behavior.
+        this.exposeGlobal = settings.exposeGlobal ?? true;
+
+        // Hooks for the stylesheet. Added here, removed in destroy(), so a
+        // reused element never keeps a previous mode's layout rules.
+        this.rootClasses = ["mdc-root", `mdc-${this.settings.mode}`];
+        this.element.classList.add(...this.rootClasses);
+
         this.createUI();
 
         this.output = new ConsoleOutput(
@@ -61,7 +70,9 @@ export default class Console {
         }
 
         // Public instance for application debugging.
-        window.devConsole = this;
+        if (this.exposeGlobal) {
+            window.devConsole = this;
+        }
 
         // Capture console.log(), console.warn(), etc.
         if (this.settings.captureConsole) {
@@ -673,24 +684,13 @@ this.toggleButton.addEventListener("click", () => {
             }
         });
 
-        // Wait one frame so the console has its final initial dimensions.
+        // Publish the viewport immediately; refresh once more after layout.
+        this.applyViewportPosition();
         refresh();
     }
 
     refreshViewportPosition() {
         if (this.settings.mode !== "overlay" || !this.element.isConnected) return;
-        const viewport = this.getViewportMetrics();
-        const rect = this.element.getBoundingClientRect();
-
-        if (this.isDocked) {
-            this.viewportPosition = {
-                x: 0,
-                y: Math.max(0, viewport.height - rect.height)
-            };
-        } else {
-            this.constrainViewportPosition(viewport, rect);
-        }
-
         this.applyViewportPosition();
     }
 
@@ -711,24 +711,32 @@ this.toggleButton.addEventListener("click", () => {
         this.viewportPosition = { x, y };
     }
 
+    // Layout is CSS-driven. JS only publishes the visual viewport and, while
+    // floating, the drag offset. Docked needs no measuring at all, so it is
+    // correct before the stylesheet finishes loading and survives keyboard,
+    // zoom and orientation changes without a second pass.
     applyViewportPosition() {
         if (this.settings.mode !== "overlay" || !this.element.isConnected) return;
+
         const viewport = this.getViewportMetrics();
-        const rect = this.element.getBoundingClientRect();
+        const style = this.element.style;
+
+        style.setProperty("--mdc-vv-left", `${viewport.offsetLeft}px`);
+        style.setProperty("--mdc-vv-top", `${viewport.offsetTop}px`);
+        style.setProperty("--mdc-vv-width", `${viewport.width}px`);
+        style.setProperty("--mdc-vv-height", `${viewport.height}px`);
+
+        this.element.classList.toggle("is-floating", !this.isDocked);
 
         if (this.isDocked) {
-            this.viewportPosition.x = 0;
-            this.viewportPosition.y = Math.max(0, viewport.height - rect.height);
-        } else {
-            this.constrainViewportPosition(viewport, rect);
+            style.removeProperty("--mdc-x");
+            style.removeProperty("--mdc-y");
+            return;
         }
 
-        this.element.style.left = `${viewport.offsetLeft + this.viewportPosition.x}px`;
-        this.element.style.top = `${viewport.offsetTop + this.viewportPosition.y}px`;
-        this.element.style.right = "auto";
-        this.element.style.bottom = "auto";
-        this.element.style.width = `${viewport.width}px`;
-        this.element.style.maxHeight = `${viewport.height}px`;
+        this.constrainViewportPosition(viewport);
+        style.setProperty("--mdc-x", `${this.viewportPosition.x}px`);
+        style.setProperty("--mdc-y", `${this.viewportPosition.y}px`);
     }
 
     undock() {
@@ -872,6 +880,25 @@ this.toggleButton.addEventListener("click", () => {
         this.inspector?.destroy?.();
         this.tests?.destroy?.();
 
+        // Make destroy() the true inverse of the constructor: leave the
+        // element exactly as it was handed to us.
+        this.element.replaceChildren();
+        this.element.classList.remove(
+            ...this.rootClasses,
+            "is-floating",
+            "collapsed"
+        );
+        for (const name of [
+            "--mdc-vv-left",
+            "--mdc-vv-top",
+            "--mdc-vv-width",
+            "--mdc-vv-height",
+            "--mdc-x",
+            "--mdc-y"
+        ]) {
+            this.element.style.removeProperty(name);
+        }
+
         if (window.devConsole === this) {
             if (this.previousDevConsole == null) {
                 delete window.devConsole;
@@ -881,4 +908,6 @@ this.toggleButton.addEventListener("click", () => {
         }
     }
 }
+
+
 

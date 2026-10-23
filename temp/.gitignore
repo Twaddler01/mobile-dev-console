@@ -1,0 +1,17 @@
+# Personal ignores
+
+**/notes/
+**/gitignored/
+
+# Environment secrets
+
+.env
+.env.*
+
+# Test dumps
+**/node_modules/
+code-dump.txt
+
+# Keystore files
+*.jks
+*.keystore

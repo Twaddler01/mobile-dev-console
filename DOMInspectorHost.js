@@ -9,6 +9,7 @@ export default class DOMInspectorHost {
     constructor({
         document: targetDocument = document,
         mountElement = null,
+        instanceId = null,
         maxNodes = 500,
         maxDepth = 40,
         onPick = null,
@@ -24,6 +25,7 @@ export default class DOMInspectorHost {
         this.document = targetDocument;
         this.window = targetDocument.defaultView;
         this.mountElement = mountElement;
+        this.instanceId = instanceId;
         this.maxNodes = maxNodes;
         this.maxDepth = maxDepth;
 
@@ -40,7 +42,10 @@ export default class DOMInspectorHost {
         this.picking = false;
         this.destroyed = false;
 
-        this.highlight = this.createHighlight();
+        // Created lazily on first selection, so an idle console leaves no
+        // empty element in the page.
+        this.highlight = null;
+        this.pickingStyle = null;
 
         this.handlePointerDown = this.handlePointerDown.bind(this);
         this.handleKeyDown = this.handleKeyDown.bind(this);
@@ -243,7 +248,10 @@ export default class DOMInspectorHost {
             return true;
         }
 
-        if (element.hasAttribute("data-dom-inspector-highlight")) {
+        if (
+            element.hasAttribute("data-dom-inspector-highlight") ||
+            element.hasAttribute("data-mdc-instance")
+        ) {
             return true;
         }
 
@@ -360,10 +368,20 @@ export default class DOMInspectorHost {
         });
     }
 
+    // Everything this host puts into the page is tagged with its instance id,
+    // so the loader can verify (and, if needed, sweep) after destroy().
+    tagOwned(node) {
+        if (this.instanceId) {
+            node.setAttribute("data-mdc-instance", this.instanceId);
+        }
+        return node;
+    }
+
     createHighlight() {
         const highlight = this.document.createElement("div");
 
         highlight.setAttribute("data-dom-inspector-highlight", "");
+        this.tagOwned(highlight);
 
         Object.assign(highlight.style, {
             position: "fixed",
@@ -384,18 +402,24 @@ export default class DOMInspectorHost {
     }
 
     updateHighlight() {
-        if (!this.highlight || !this.selectedId) {
+        if (this.destroyed || !this.selectedId) {
             return;
         }
 
         const element = this.getElementById(this.selectedId);
 
         if (!element) {
-            this.highlight.style.display = "none";
+            if (this.highlight) {
+                this.highlight.style.display = "none";
+            }
             return;
         }
 
         const rect = element.getBoundingClientRect();
+
+        if (!this.highlight) {
+            this.highlight = this.createHighlight();
+        }
 
         Object.assign(this.highlight.style, {
             display: "block",
@@ -417,7 +441,33 @@ export default class DOMInspectorHost {
 
         this.picking = true;
 
-        this.document.documentElement.classList.add("dom-inspector-picking");
+        this.setPickingStyle(true);
+    }
+
+    // The crosshair cursor must apply to the inspected page, which may not
+    // have console.css loaded (embedded mode, shadow-DOM overlay). Inject
+    // a scoped rule only while picking and remove it afterwards.
+    setPickingStyle(active) {
+        const root = this.document.documentElement;
+
+        if (!active) {
+            root.removeAttribute("data-mdc-picking");
+            this.pickingStyle?.remove();
+            this.pickingStyle = null;
+            return;
+        }
+
+        root.setAttribute("data-mdc-picking", "");
+
+        if (!this.pickingStyle) {
+            const style = this.document.createElement("style");
+            style.textContent =
+                "html[data-mdc-picking], html[data-mdc-picking] * " +
+                "{ cursor: crosshair !important; }";
+            this.tagOwned(style);
+            (this.document.head ?? root).appendChild(style);
+            this.pickingStyle = style;
+        }
     }
 
     cancelPicking() {
@@ -427,7 +477,7 @@ export default class DOMInspectorHost {
 
         this.picking = false;
 
-        this.document.documentElement.classList.remove("dom-inspector-picking");
+        this.setPickingStyle(false);
 
         this.onPickCancelled?.();
     }
@@ -504,7 +554,7 @@ export default class DOMInspectorHost {
         this.destroyed = true;
         this.picking = false;
 
-        this.document.documentElement.classList.remove("dom-inspector-picking");
+        this.setPickingStyle(false);
 
         this.document.removeEventListener(
             "pointerdown",
@@ -527,3 +577,4 @@ export default class DOMInspectorHost {
         this.elementIds = new WeakMap();
     }
 }
+

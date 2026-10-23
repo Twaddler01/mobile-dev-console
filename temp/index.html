@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>mobile-dev-console</title>
+    </head>
+    <body>
+        <!-- Needed for console elements. -->
+        <div id="productionErrorLog"></div>
+        <div id="devtools"></div>
+
+        <!-- For TestEnvironment / your other scripts -->
+        <div id="main"></div>
+
+        <!-- Install error listeners first. -->
+        <script src="./errorBootstrap.js"></script>
+
+        <!-- Initialize the console before integrations and the application. -->
+        <script type="module">
+            try {
+                const { default: DevTools } =
+                    await import("./DevTools.js");
+
+                const devTools = DevTools.mount({
+                    
+                    mode: "embedded",
+                    mountPoint: "#devtools",
+                    height: "60dvh",
+                    captureConsole: true,
+                    mirrorToNative: false,
+                    showCopyButtons: false,
+                    allowDragOutsideBounds: true
+                });
+
+                // Register example tools after the public console API exists.
+                await import("./DemoDebugSuite.js");
+
+                // Load the app only after console integrations are ready.
+                // Replace TestEnvironment.js with your application entry point as needed.
+                await import("./TestEnvironment.js");
+            } catch (error) {
+                if (window.devConsole) {
+                    window.devConsole.error(error);
+                } else {
+                    window.showFatalError("Application Startup Failed", error);
+                }
+            }
+        </script>
+    </body>
+</html>
+
+

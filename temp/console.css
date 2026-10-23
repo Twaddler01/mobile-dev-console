@@ -1,0 +1,1026 @@
+/* ==========================================
+   CONSOLE ROOT
+   Every selector in this file is scoped under .mdc-root so the sheet
+   can live inside a shadow root (overlay) or its own document (iframe)
+   without ID-level specificity or global side effects.
+   ========================================== */
+
+.mdc-root {
+    --mdc-header-height: 44px;
+    --mdc-safe-bottom: 0px;
+
+    display: flex;
+    flex-direction: column;
+
+    box-sizing: border-box;
+    overflow: hidden;
+    pointer-events: auto;
+
+    background: #222;
+    color: #eee;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    line-height: normal;
+    text-align: left;
+
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    overscroll-behavior: contain;
+}
+
+/* Overlay: docked by default. Geometry comes from the visual viewport
+   (--mdc-vv-* are written by Console.js), so the on-screen keyboard,
+   pinch-zoom and browser-chrome changes are handled in CSS. */
+.mdc-root.mdc-overlay {
+    position: fixed;
+    z-index: 2147483000;
+
+    left: var(--mdc-vv-left, 0px);
+    width: var(--mdc-vv-width, 100%);
+
+    /* Bottom edge of the visual viewport, pulled up by its own height. */
+    top: calc(var(--mdc-vv-top, 0px) + var(--mdc-vv-height, 100dvh));
+    transform: translateY(-100%);
+
+    height: min(60dvh, var(--mdc-vv-height, 100dvh));
+    max-height: var(--mdc-vv-height, 100dvh);
+
+    --mdc-safe-bottom: env(safe-area-inset-bottom, 0px);
+    padding:
+        0
+        env(safe-area-inset-right, 0px)
+        var(--mdc-safe-bottom)
+        env(safe-area-inset-left, 0px);
+}
+
+/* Overlay: undocked / floating. */
+.mdc-root.mdc-overlay.is-floating {
+    top: var(--mdc-vv-top, 0px);
+    transform: translate(var(--mdc-x, 0px), var(--mdc-y, 0px));
+    --mdc-safe-bottom: 0px;
+    padding: 0;
+}
+
+/* Embedded: the iframe document owns the viewport, so just fill it. */
+.mdc-root.mdc-embedded {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+}
+
+/* ==========================================
+   OVERLAY HEADER AND ICON CONTROLS
+   ========================================== */
+
+.mdc-root .console-header {
+    flex: 0 0 44px;
+    min-height: 44px;
+
+    display: flex;
+    align-items: center;
+    gap: 7px;
+
+    box-sizing: border-box;
+    padding: 0 8px;
+
+    background: #222;
+    color: #fff;
+    border-bottom: 1px solid #444;
+
+    user-select: none;
+}
+
+.mdc-root .console-title {
+    margin-right: auto;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+}
+
+.mdc-root .console-icon-button {
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    padding: 0;
+    border: 1px solid #555;
+    border-radius: 7px;
+
+    background: #383838;
+    color: #fff;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.mdc-root .console-icon-button svg {
+    display: block;
+    width: 20px;
+    height: 20px;
+    pointer-events: none;
+}
+
+.mdc-root .console-icon-button:active {
+    background: #505050;
+}
+
+.mdc-root .console-drag-handle {
+    cursor: move;
+    touch-action: none;
+}
+
+.mdc-root .console-drag-handle[hidden] {
+    display: none;
+}
+
+/* ==========================================
+   MAIN TOOL TABS
+   ========================================== */
+
+.mdc-root .console-tabs {
+    flex: 0 0 auto;
+
+    display: flex;
+    gap: 4px;
+    padding: 6px 8px;
+
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+
+    background: #292929;
+    border-bottom: 1px solid #444;
+    scrollbar-width: none;
+}
+
+.mdc-root .console-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.mdc-root .console-tab {
+    flex: 1 0 auto;
+    min-height: 34px;
+    padding: 6px 12px;
+
+    border: 1px solid #555;
+    border-radius: 5px;
+
+    background: #383838;
+    color: #ddd;
+
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.mdc-root .console-tab.active {
+    background: #3d5afe;
+    border-color: #3d5afe;
+    color: #fff;
+}
+
+.mdc-root .console-tab:focus-visible,
+.mdc-root button:focus-visible {
+    outline: 2px solid #8ea0ff;
+    outline-offset: 2px;
+}
+
+/* ==========================================
+   ACTIVE TAB AREA
+   ========================================== */
+
+.mdc-root .console-content {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.mdc-root .console-panel {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+
+    height: auto;
+    max-height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.mdc-root .console-panel[hidden] {
+    display: none;
+}
+
+/* ==========================================
+   LOG FOOTER ACTIONS
+   The footer stays visible while output scrolls.
+   ========================================== */
+
+.mdc-root .console-log-footer {
+    flex: 0 0 46px;
+    min-height: 46px;
+
+    display: flex;
+    align-items: center;
+    gap: 6px;
+
+    box-sizing: border-box;
+    padding: 0 8px;
+
+    background: #202020;
+    border-top: 1px solid #383838;
+}
+
+.mdc-root .console-footer-status {
+    color: #737373;
+    font: 10px/1.2 monospace;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+}
+
+.mdc-root .console-toolbar-spacer {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.mdc-root .console-action-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+
+    min-height: 30px;
+    padding: 0 7px;
+
+    border: 1px solid #454545;
+    border-radius: 4px;
+
+    background: #292929;
+    color: #c7c7c7;
+
+    font:
+        600 10px/1 Arial,
+        sans-serif;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.mdc-root .console-action-button svg {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+    pointer-events: none;
+}
+
+.mdc-root .console-action-button:active,
+.mdc-root .console-action-button.copied {
+    background: #303d32;
+    border-color: #4c8a5a;
+    color: #8fe09e;
+}
+
+/* ==========================================
+   SCROLLABLE LOG OUTPUT
+   ========================================== */
+
+.mdc-root .console-output-scroll {
+    flex: 1 1 0%;
+    min-height: 0;
+    max-height: 100%;
+    overflow-y: auto;
+    overflow-x: auto;
+
+    background: #050505;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+#js-console,
+#js-console * {
+    box-sizing: border-box;
+}
+
+#js-console {
+    min-height: 100%;
+    padding: 5px 0 8px;
+    background: #050505;
+    color: #d4d4d4;
+    font:
+        12px/1.55 "SFMono-Regular",
+        Consolas,
+        "Liberation Mono",
+        monospace;
+}
+
+#js-console > div {
+    margin: 0;
+    padding: 2px 9px;
+    border: 0;
+    border-bottom: 1px solid #171717;
+    background: #050505;
+    color: #d4d4d4;
+    font: inherit;
+}
+
+#js-console .log {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow-x: auto;
+    color: #d4d4d4;
+}
+
+#js-console .warn {
+    background: #050505;
+    color: #ffd166;
+    font-weight: 600;
+}
+
+#js-console .error {
+    background: #050505;
+    color: #ff7373;
+    font-weight: 600;
+}
+
+#js-console .prefix {
+    display: inline-block;
+    min-width: 5em;
+    margin-right: 0.8em;
+    color: #79c0ff;
+    opacity: 1;
+}
+
+#js-console .table {
+    position: relative;
+    overflow-x: auto;
+    background: #050505;
+    color: #d4d4d4;
+    font-family: monospace;
+    padding: 4px;
+}
+
+#js-console .table table {
+    color: #fff;
+    border-collapse: collapse;
+    width: max-content;
+    min-width: 100%;
+    font: inherit;
+}
+
+#js-console .table th,
+#js-console .table td {
+    padding: 4px 8px;
+    border: 1px solid #555;
+    text-align: left;
+    vertical-align: top;
+    white-space: pre-wrap;
+}
+
+#js-console .table th {
+    background: #151515;
+    color: #79c0ff;
+    font-weight: bold;
+}
+
+#js-console .table td:first-child,
+#js-console .table th:first-child {
+    color: #bbb;
+    white-space: nowrap;
+}
+
+#js-console .group {
+    background: #050505;
+    color: #79c0ff;
+    font-weight: bold;
+    border-left: 3px solid #888;
+}
+
+#js-console .group-header {
+    padding: 3px 4px;
+    cursor: pointer;
+    user-select: none;
+    font-weight: bold;
+}
+
+#js-console .group-header:hover {
+    background-color: #171717;
+}
+
+#js-console .group-arrow {
+    display: inline-block;
+    width: 1em;
+}
+
+#js-console .group-content {
+    display: block;
+}
+
+#js-console .group.collapsed .group-content {
+    display: none;
+}
+
+#js-console .console-copy {
+    float: right;
+    margin-left: 8px;
+    padding: 2px 6px;
+    font-size: 0.75em;
+    cursor: pointer;
+}
+
+/* ==========================================
+   COLLAPSIBLE ERROR DETAILS
+   ========================================== */
+
+#js-console .error-entry {
+    padding: 4px 0;
+}
+
+#js-console .error-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    cursor: pointer;
+}
+
+#js-console .error-arrow {
+    flex-shrink: 0;
+    font-size: 11px;
+}
+
+#js-console .error-message {
+    flex: 1 1 auto;
+    overflow-wrap: anywhere;
+}
+
+#js-console .error-source {
+    font-size: 0.85em;
+    opacity: 0.75;
+    overflow-wrap: anywhere;
+}
+
+#js-console .error-trace {
+    margin: 6px 0 4px 18px;
+    padding: 8px;
+    border-left: 2px solid currentColor;
+    background: #111;
+}
+
+#js-console .error-trace[hidden] {
+    display: none;
+}
+
+#js-console .error-trace-text {
+    margin: 0 0 8px;
+    font: inherit;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+/* ==========================================
+   PLACEHOLDER TOOL PANELS
+   ========================================== */
+
+.mdc-root .console-placeholder {
+    overflow-y: auto;
+    padding: 16px;
+    color: #ddd;
+}
+
+.mdc-root .console-placeholder strong {
+    color: #fff;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+}
+
+.mdc-root .console-placeholder p {
+    color: #bbb;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* ==========================================
+   COLLAPSED CONSOLE
+   ========================================== */
+
+.mdc-root.collapsed {
+    height: calc(var(--mdc-header-height) + var(--mdc-safe-bottom)) !important;
+    min-height: calc(var(--mdc-header-height) + var(--mdc-safe-bottom)) !important;
+    max-height: calc(var(--mdc-header-height) + var(--mdc-safe-bottom)) !important;
+}
+
+/* Keep the header and its controls visible in both modes. */
+.mdc-root.collapsed > .console-header {
+    display: flex !important;
+    flex: 0 0 44px;
+    width: 100%;
+    height: 44px;
+    min-height: 44px;
+    box-sizing: border-box;
+}
+
+/* Hide only the console content. */
+.mdc-root.collapsed > .console-tabs,
+.mdc-root.collapsed > .console-content {
+    display: none !important;
+}
+
+/* ==========================================
+   DOM INSPECTOR
+   Kept separate from Console so other inspection
+   adapters can be added without changing its UI.
+   ========================================== */
+
+#consoleInspectPanel {
+    background: #101010;
+    color: #ddd;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 11px;
+}
+
+.mdc-root .dom-inspector {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.mdc-root .dom-inspector-toolbar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+    padding: 7px;
+    background: #202020;
+    border-bottom: 1px solid #383838;
+}
+
+.mdc-root .dom-inspector-button {
+    min-height: 30px;
+    padding: 0 8px;
+    border: 1px solid #484848;
+    border-radius: 4px;
+    background: #303030;
+    color: #ddd;
+    font:
+        600 10px Arial,
+        sans-serif;
+    white-space: nowrap;
+    touch-action: manipulation;
+}
+
+.mdc-root .dom-inspector-button.active {
+    border-color: #33d6e8;
+    background: #12383d;
+    color: #8cf4ff;
+}
+
+.mdc-root .dom-inspector-status {
+    min-width: 0;
+    margin-left: auto;
+    overflow: hidden;
+    color: #999;
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mdc-root .dom-inspector-workspace {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.mdc-root .dom-tree-pane,
+.mdc-root .dom-details-pane {
+    display: flex;
+    flex: 1 1 50%;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.mdc-root .dom-tree-pane {
+    border-bottom: 1px solid #414141;
+}
+
+.mdc-root .dom-pane-heading {
+    flex: 0 0 auto;
+    padding: 5px 8px;
+    background: #191919;
+    color: #888;
+    font:
+        700 9px Arial,
+        sans-serif;
+    letter-spacing: 0.1em;
+}
+
+.mdc-root .dom-tree-scroll,
+.mdc-root .dom-details-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+.mdc-root .dom-tree-node {
+    min-width: max-content;
+}
+
+.mdc-root .dom-tree-row {
+    display: flex;
+    align-items: stretch;
+    min-height: 25px;
+    padding-right: 5px;
+}
+
+.mdc-root .dom-tree-toggle {
+    flex: 0 0 25px;
+    width: 25px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #999;
+    font: 13px monospace;
+    touch-action: manipulation;
+}
+
+.mdc-root .dom-tree-toggle.no-children {
+    color: #555;
+}
+
+.mdc-root .dom-tree-select {
+    min-height: 25px;
+    padding: 3px 5px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: #9cdcfe;
+    font:
+        11px/1.4 "SFMono-Regular",
+        Consolas,
+        monospace;
+    text-align: left;
+    white-space: pre;
+    touch-action: manipulation;
+}
+
+.mdc-root .dom-tree-select.selected {
+    background: #23424b;
+    color: #fff;
+}
+
+.mdc-root .dom-tree-children {
+    padding-left: 13px;
+    border-left: 1px solid #292929;
+    margin-left: 11px;
+}
+
+.mdc-root .dom-tree-children[hidden] {
+    display: none;
+}
+
+.mdc-root .dom-inspector-limit,
+.mdc-root .dom-inspector-empty {
+    padding: 10px;
+    color: #888;
+    font:
+        11px/1.5 Arial,
+        sans-serif;
+}
+
+.mdc-root .dom-detail-section {
+    padding: 7px 9px;
+    border-bottom: 1px solid #292929;
+}
+
+.mdc-root .dom-detail-section h4 {
+    margin: 0 0 6px;
+    color: #79c0ff;
+    font:
+        700 9px Arial,
+        sans-serif;
+    letter-spacing: 0.08em;
+}
+
+.mdc-root .dom-detail-section dl {
+    display: grid;
+    grid-template-columns: minmax(75px, 34%) minmax(0, 1fr);
+    gap: 4px 8px;
+    margin: 0;
+}
+
+.mdc-root .dom-detail-section dt {
+    color: #999;
+    overflow-wrap: anywhere;
+}
+
+.mdc-root .dom-detail-section dd {
+    min-width: 0;
+    margin: 0;
+    color: #ddd;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+
+@media (min-width: 700px) {
+    .mdc-root .dom-inspector-workspace {
+        flex-direction: row;
+    }
+
+    .mdc-root .dom-tree-pane,
+    .mdc-root .dom-details-pane {
+        flex-basis: 50%;
+    }
+
+    .mdc-root .dom-tree-pane {
+        border-right: 1px solid #414141;
+        border-bottom: 0;
+    }
+}
+
+/* ==========================================
+   PROJECT TEST / DEBUG REGISTRY
+   ========================================== */
+
+#consoleTestsPanel {
+    background: #101010;
+    color: #ddd;
+}
+
+.mdc-root .console-tests {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.mdc-root .console-tests-heading {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    background: #202020;
+    border-bottom: 1px solid #383838;
+}
+
+.mdc-root .console-tests-heading strong {
+    color: #aaa;
+    font:
+        700 10px Arial,
+        sans-serif;
+    letter-spacing: 0.08em;
+}
+
+.mdc-root .console-tests-count {
+    margin-left: auto;
+    color: #777;
+    font: 10px monospace;
+}
+
+.mdc-root .console-tests-status {
+    padding: 8px 10px;
+    border-bottom: 1px solid #252525;
+    color: #79c0ff;
+    font: 10px/1.4 monospace;
+}
+
+.mdc-root .console-tests-empty {
+    padding: 14px 10px;
+    color: #888;
+    font:
+        12px/1.5 Arial,
+        sans-serif;
+}
+
+.mdc-root .console-tests-suite {
+    margin: 9px;
+    border: 1px solid #363636;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.mdc-root .console-tests-suite-heading {
+    padding: 9px 10px;
+    background: #1c1c1c;
+    border-bottom: 1px solid #363636;
+}
+
+.mdc-root
+    .console-tests-suite-heading
+    strong {
+    color: #e6e6e6;
+    font:
+        700 12px Arial,
+        sans-serif;
+}
+
+.mdc-root .console-tests-suite-heading p {
+    margin: 4px 0 0;
+    color: #888;
+    font:
+        11px/1.4 Arial,
+        sans-serif;
+}
+
+.mdc-root .console-tests-action {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px;
+    border-bottom: 1px solid #292929;
+}
+
+.mdc-root .console-tests-action:last-child {
+    border-bottom: 0;
+}
+
+.mdc-root .console-tests-action-info {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.mdc-root .console-tests-action-label {
+    color: #ddd;
+    font:
+        11px Arial,
+        sans-serif;
+}
+
+.mdc-root
+    .console-tests-action-description {
+    color: #858585;
+    font:
+        10px/1.4 Arial,
+        sans-serif;
+}
+
+.mdc-root .console-tests-run {
+    flex: 0 0 auto;
+    min-width: 55px;
+    min-height: 30px;
+    padding: 0 9px;
+    border: 1px solid #426b76;
+    border-radius: 4px;
+    background: #19363d;
+    color: #a4edf7;
+    font:
+        700 10px Arial,
+        sans-serif;
+    touch-action: manipulation;
+}
+
+.mdc-root .console-tests-run:disabled {
+    opacity: 0.7;
+}
+
+.mdc-root .console-tests-run.running {
+    border-color: #8a7138;
+    background: #3c321b;
+    color: #ffe09a;
+}
+
+/* Let the test list grow to its natural content height.
+   The .console-tests root remains the scroll container. */
+.mdc-root .console-tests-status,
+.mdc-root .console-tests-empty,
+.mdc-root .console-tests-suite {
+    flex: 0 0 auto;
+}
+
+/* Keep each action row at its intended height. */
+.mdc-root .console-tests-action {
+    flex: 0 0 auto;
+}
+
+/* ==========================================
+   SETTINGS
+   ========================================== */
+
+#consoleSettingsPanel {
+    background: #101010;
+    color: #ddd;
+}
+
+.mdc-root .console-settings {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+.mdc-root .console-settings-category {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+}
+
+.mdc-root
+    .console-settings-category
+    + .console-settings-category {
+    border-top: 1px solid #383838;
+    margin-top: 8px;
+    padding-top: 8px;
+}
+
+.mdc-root .console-settings-heading {
+    padding: 14px 12px;
+    background: #202020;
+    border-bottom: 1px solid #383838;
+}
+
+.mdc-root .console-settings-heading strong {
+    color: #aaa;
+    font:
+        700 10px Arial,
+        sans-serif;
+    letter-spacing: 0.08em;
+}
+
+.mdc-root .console-settings-heading p {
+    margin: 6px 0 0;
+    color: #888;
+    font:
+        12px/1.5 Arial,
+        sans-serif;
+}
+
+.mdc-root .console-setting {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 12px;
+    border-bottom: 1px solid #292929;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.mdc-root .console-setting input {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    margin: 1px 0 0;
+    accent-color: #3d5afe;
+    cursor: pointer;
+}
+
+.mdc-root .console-setting-info {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+}
+
+.mdc-root .console-setting-info strong {
+    color: #e6e6e6;
+    font:
+        600 13px Arial,
+        sans-serif;
+}
+
+.mdc-root .console-setting-info small {
+    color: #929292;
+    font:
+        12px/1.45 Arial,
+        sans-serif;
+}
+
+/* Existing log entries respond to the setting immediately. */
+#js-console.hide-copy-buttons .console-copy {
+    display: none;
+}
+
+

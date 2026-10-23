@@ -1,3 +1,4 @@
+
 import ConsoleOutput from "./ConsoleOutput.js";
 import { icon } from "./icons.js";
 import DOMInspector from "./DOMInspector.js";
@@ -36,7 +37,8 @@ export default class Console {
 
         this.inspector = new DOMInspector({
             panel: this.element.querySelector("#consoleInspectPanel"),
-            consoleElement: this.element
+            consoleElement: this.element,
+            inspectionBridge: settings.inspectionBridge ?? null
         });
 
         this.tests = new TestRegistry(
@@ -412,7 +414,7 @@ export default class Console {
                 })
             );
         });
-        /*
+/*
         this.toggleButton.addEventListener("click", () => {
             const collapsed = this.element.classList.toggle("collapsed");
 
@@ -420,12 +422,14 @@ export default class Console {
         });
 
 */
-        this.toggleButton.addEventListener("click", () => {
+this.toggleButton.addEventListener("click", () => {
             const collapsed = this.element.classList.toggle("collapsed");
             this.updateToggleButton(collapsed);
             this.refreshViewportPosition();
         });
 
+
+        
         this.bindTabs();
         this.bindSettings();
         this.bindDragging();
@@ -601,23 +605,11 @@ export default class Console {
             if (this.settings.allowDragOutsideBounds) {
                 // Allow most of the console to sit outside the viewport, but
                 // always leave a usable strip on-screen so it can be recovered.
-                x = Math.min(
-                    viewport.width - visibleStrip,
-                    Math.max(visibleStrip - width, x)
-                );
-                y = Math.min(
-                    viewport.height - visibleStrip,
-                    Math.max(visibleStrip - height, y)
-                );
+                x = Math.min(viewport.width - visibleStrip, Math.max(visibleStrip - width, x));
+                y = Math.min(viewport.height - visibleStrip, Math.max(visibleStrip - height, y));
             } else {
-                x = Math.min(
-                    Math.max(0, viewport.width - width),
-                    Math.max(0, x)
-                );
-                y = Math.min(
-                    Math.max(0, viewport.height - height),
-                    Math.max(0, y)
-                );
+                x = Math.min(Math.max(0, viewport.width - width), Math.max(0, x));
+                y = Math.min(Math.max(0, viewport.height - height), Math.max(0, y));
             }
 
             this.viewportPosition = { x, y };
@@ -630,9 +622,7 @@ export default class Console {
         };
 
         this.dragHandle.addEventListener("pointerdown", onPointerDown);
-        document.addEventListener("pointermove", onPointerMove, {
-            passive: false
-        });
+        document.addEventListener("pointermove", onPointerMove, { passive: false });
         document.addEventListener("pointerup", stopDragging);
         document.addEventListener("pointercancel", stopDragging);
 
@@ -688,8 +678,7 @@ export default class Console {
     }
 
     refreshViewportPosition() {
-        if (this.settings.mode !== "overlay" || !this.element.isConnected)
-            return;
+        if (this.settings.mode !== "overlay" || !this.element.isConnected) return;
         const viewport = this.getViewportMetrics();
         const rect = this.element.getBoundingClientRect();
 
@@ -705,24 +694,15 @@ export default class Console {
         this.applyViewportPosition();
     }
 
-    constrainViewportPosition(
-        viewport = this.getViewportMetrics(),
-        rect = this.element.getBoundingClientRect()
-    ) {
+    constrainViewportPosition(viewport = this.getViewportMetrics(), rect = this.element.getBoundingClientRect()) {
         const width = rect.width || viewport.width;
         const height = rect.height || 44;
         const visibleStrip = Math.min(48, width, height);
         let { x, y } = this.viewportPosition ?? { x: 0, y: 0 };
 
         if (this.settings.allowDragOutsideBounds) {
-            x = Math.min(
-                viewport.width - visibleStrip,
-                Math.max(visibleStrip - width, x)
-            );
-            y = Math.min(
-                viewport.height - visibleStrip,
-                Math.max(visibleStrip - height, y)
-            );
+            x = Math.min(viewport.width - visibleStrip, Math.max(visibleStrip - width, x));
+            y = Math.min(viewport.height - visibleStrip, Math.max(visibleStrip - height, y));
         } else {
             x = Math.min(Math.max(0, viewport.width - width), Math.max(0, x));
             y = Math.min(Math.max(0, viewport.height - height), Math.max(0, y));
@@ -732,17 +712,13 @@ export default class Console {
     }
 
     applyViewportPosition() {
-        if (this.settings.mode !== "overlay" || !this.element.isConnected)
-            return;
+        if (this.settings.mode !== "overlay" || !this.element.isConnected) return;
         const viewport = this.getViewportMetrics();
         const rect = this.element.getBoundingClientRect();
 
         if (this.isDocked) {
             this.viewportPosition.x = 0;
-            this.viewportPosition.y = Math.max(
-                0,
-                viewport.height - rect.height
-            );
+            this.viewportPosition.y = Math.max(0, viewport.height - rect.height);
         } else {
             this.constrainViewportPosition(viewport, rect);
         }
@@ -905,3 +881,4 @@ export default class Console {
         }
     }
 }
+

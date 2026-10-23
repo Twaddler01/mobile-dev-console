@@ -222,8 +222,33 @@ function createOverlayConsole({
     const previousDevConsole = window.devConsole;
 
     let consoleInstance;
+    let inspectorHost;
+
+    const dispatchInspectorEvent = (event, payload = {}) => {
+        window.dispatchEvent(
+            new CustomEvent("devtools-inspect-event", {
+                detail: { event, payload }
+            })
+        );
+    };
 
     try {
+        // Overlay mode runs in the application document, so inspection can
+        // call the host directly instead of requiring the iframe message bridge.
+        inspectorHost = new DOMInspectorHost({
+            document,
+            mountElement: consoleElement,
+            onPick({ id, details }) {
+                dispatchInspectorEvent("picked", { id, details });
+            },
+            onPickCancelled() {
+                dispatchInspectorEvent("pick-cancelled");
+            },
+            onSelectionChange({ id, details }) {
+                dispatchInspectorEvent("selection-changed", { id, details });
+            }
+        });
+
         consoleInstance = new Console({
             element: consoleElement,
             mode: "overlay",
@@ -231,9 +256,11 @@ function createOverlayConsole({
             mirrorToNative,
             showCopyButtons,
             allowDragOutsideBounds,
-            logTestOutput
+            logTestOutput,
+            inspectionBridge: inspectorHost
         });
     } catch (error) {
+        inspectorHost?.destroy();
         consoleElement.remove();
         throw error;
     }
@@ -279,6 +306,8 @@ function createOverlayConsole({
             );
 
             consoleInstance.destroy();
+            inspectorHost?.destroy();
+            inspectorHost = null;
             consoleElement.remove();
 
             if (window.devConsole === consoleInstance) {
@@ -928,3 +957,4 @@ function createEmbeddedConsole({
 
     return api;
 }
+

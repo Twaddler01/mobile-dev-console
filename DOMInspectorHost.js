@@ -60,6 +60,38 @@ export default class DOMInspectorHost {
     }
 
     // --------------------------------------------------
+    // Request adapter
+    // --------------------------------------------------
+
+    // DOMInspector uses this same request contract in both modes. In embedded
+    // mode requests cross postMessage; in overlay mode they call this host.
+    async request(action, payload = {}) {
+        if (this.destroyed) {
+            throw new Error("DOMInspectorHost has been destroyed.");
+        }
+
+        switch (action) {
+            case "get-tree":
+                return this.getTree();
+            case "get-details":
+                return this.getDetails(payload.id);
+            case "select":
+                return this.select(payload.id);
+            case "clear-selection":
+                this.clearSelection();
+                return true;
+            case "start-picking":
+                this.startPicking();
+                return true;
+            case "cancel-picking":
+                this.cancelPicking();
+                return true;
+            default:
+                throw new Error(`Unknown inspector action: ${action}`);
+        }
+    }
+
+    // --------------------------------------------------
     // DOM tree
     // --------------------------------------------------
 
@@ -407,14 +439,27 @@ export default class DOMInspectorHost {
 
         const target = event.target;
 
-        // Taps outside the inspectable project area cancel picking.
         if (
             !target ||
             target.nodeType !== 1 ||
             target === this.document.documentElement ||
-            target === this.document.body ||
-            this.isExcluded(target)
+            target === this.document.body
         ) {
+            this.cancelPicking();
+            return;
+        }
+
+        // Overlay controls must remain usable while picking so the user can
+        // press CANCEL PICKING. Let the inspector UI handle console clicks.
+        if (
+            this.mountElement &&
+            (target === this.mountElement || this.mountElement.contains(target))
+        ) {
+            return;
+        }
+
+        // Taps outside the inspectable project area cancel picking.
+        if (this.isExcluded(target)) {
             this.cancelPicking();
             return;
         }

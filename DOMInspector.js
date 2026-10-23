@@ -6,7 +6,12 @@
  * parentDOMInspector message bridge.
  */
 export default class DOMInspector {
-    constructor({ panel, consoleElement, maxNodes = 500 } = {}) {
+    constructor({
+        panel,
+        consoleElement,
+        maxNodes = 500,
+        inspectionBridge = null
+    } = {}) {
         if (!panel) {
             throw new Error("DOMInspector: panel is required.");
         }
@@ -15,7 +20,8 @@ export default class DOMInspector {
             throw new Error("DOMInspector: consoleElement is required.");
         }
 
-        this.parentDOMInspector = window.parentDOMInspector ?? null;
+        this.parentDOMInspector =
+            inspectionBridge ?? window.parentDOMInspector ?? null;
 
         if (!this.parentDOMInspector) {
             console.warn(

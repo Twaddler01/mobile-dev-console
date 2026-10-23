@@ -1,6 +1,6 @@
 CODE DUMP
 Project: mobile-dev-console
-Files selected: 10
+Files selected: 14
 ========================================
 
 ===== FILE: console-frame.html =====
@@ -426,14 +426,6 @@ function ensureConsoleStyles() {
     link.dataset.mobileDevConsoleStyles = "";
 
     document.head.appendChild(link);
-}
-
-function createConsoleElement() {
-    const element = document.createElement("div");
-    element.id = "consoleLog";
-    document.body.appendChild(element);
-
-    return element;
 }
 
 /**
@@ -1349,10 +1341,14 @@ function createEmbeddedConsole({
 
 ===== FILE: console.css =====
 
-
 /* ==========================================
    OVERLAY FRAME
    ========================================== */
+
+.mobile-dev-console-overlay {
+    bottom: auto;
+    top: auto;
+}
 
 :is(#consoleLog, .mobile-dev-console-overlay) {
     position: fixed;
@@ -1833,25 +1829,32 @@ function createEmbeddedConsole({
     min-height: 44px !important;
     max-height: 44px !important;
 
+    position: fixed;
     left: 0;
     right: 0;
     top: auto;
     bottom: 0;
 
-    width: 100%;
+    width: auto;
+    box-sizing: border-box;
     padding: 0;
     overflow: hidden;
 }
 
-:is(#consoleLog, .mobile-dev-console-overlay).collapsed .console-tabs,
-:is(#consoleLog, .mobile-dev-console-overlay).collapsed .console-content {
-    display: none !important;
+/* Keep the header and its controls visible in both modes. */
+:is(#consoleLog, .mobile-dev-console-overlay).collapsed > .console-header {
+    display: flex !important;
+    flex: 0 0 44px;
+    width: 100%;
+    height: 44px;
+    min-height: 44px;
+    box-sizing: border-box;
 }
 
-:is(#consoleLog, .mobile-dev-console-overlay).collapsed .console-header {
-    flex: 0 0 44px;
-    min-height: 44px;
-    height: 44px;
+/* Hide only the console content. */
+:is(#consoleLog, .mobile-dev-console-overlay).collapsed > .console-tabs,
+:is(#consoleLog, .mobile-dev-console-overlay).collapsed > .console-content {
+    display: none !important;
 }
 
 /* ==========================================
@@ -2167,7 +2170,9 @@ function createEmbeddedConsole({
     border-bottom: 1px solid #363636;
 }
 
-:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-suite-heading strong {
+:is(#consoleLog, .mobile-dev-console-overlay)
+    .console-tests-suite-heading
+    strong {
     color: #e6e6e6;
     font:
         700 12px Arial,
@@ -2209,7 +2214,8 @@ function createEmbeddedConsole({
         sans-serif;
 }
 
-:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-action-description {
+:is(#consoleLog, .mobile-dev-console-overlay)
+    .console-tests-action-description {
     color: #858585;
     font:
         10px/1.4 Arial,
@@ -2241,7 +2247,6 @@ function createEmbeddedConsole({
     color: #ffe09a;
 }
 
-
 /* Let the test list grow to its natural content height.
    The .console-tests root remains the scroll container. */
 :is(#consoleLog, .mobile-dev-console-overlay) .console-tests-status,
@@ -2254,7 +2259,6 @@ function createEmbeddedConsole({
 :is(#consoleLog, .mobile-dev-console-overlay) .console-tests-action {
     flex: 0 0 auto;
 }
-
 
 /* ==========================================
    SETTINGS
@@ -2279,7 +2283,9 @@ function createEmbeddedConsole({
     flex: 0 0 auto;
 }
 
-:is(#consoleLog, .mobile-dev-console-overlay) .console-settings-category + .console-settings-category {
+:is(#consoleLog, .mobile-dev-console-overlay)
+    .console-settings-category
+    + .console-settings-category {
     border-top: 1px solid #383838;
     margin-top: 8px;
     padding-top: 8px;
@@ -2365,7 +2371,8 @@ import TestRegistry from "./TestRegistry.js";
 
 export default class Console {
     constructor(settings = {}) {
-        this.element = settings.element ?? document.getElementById("consoleLog");
+        this.element =
+            settings.element ?? document.getElementById("consoleLog");
 
         this.settings = {
             // Actual validation and fallback happens in createConsoleHost() in console-loader.js
@@ -2767,13 +2774,31 @@ export default class Console {
                 })
             );
         });
-
+/*
         this.toggleButton.addEventListener("click", () => {
             const collapsed = this.element.classList.toggle("collapsed");
 
             this.updateToggleButton(collapsed);
         });
 
+*/
+this.toggleButton.addEventListener("click", () => {
+    const collapsed = this.element.classList.toggle("collapsed");
+
+    this.updateToggleButton(collapsed);
+
+    // Request a repaint after the layout change.
+    requestAnimationFrame(() => {
+        this.element.style.visibility = "hidden";
+
+        requestAnimationFrame(() => {
+            this.element.style.visibility = "visible";
+        });
+    });
+});
+
+
+        
         this.bindTabs();
         this.bindSettings();
         this.bindDragging();
@@ -2883,6 +2908,11 @@ export default class Console {
             "aria-label",
             `${label} developer tools content`
         );
+        this.toggleButton.setAttribute("aria-expanded", String(!collapsed));
+        this.toggleButton.title = label;
+
+        // Only the content collapses. Keep the console root and header mounted.
+        this.element.classList.toggle("collapsed", collapsed);
 
         this.element.dispatchEvent(
             new CustomEvent("console-collapse-changed", {
@@ -2890,8 +2920,6 @@ export default class Console {
                 detail: { collapsed }
             })
         );
-
-        this.toggleButton.title = label;
     }
 
     // ==========================================
@@ -3761,6 +3789,71 @@ export default class ConsoleOutput {
 
 ===== END FILE =====
 
+===== FILE: DemoDebugSuite.js =====
+
+/**
+ * Example of how an external project registers tools with mobile-dev-console.
+ * Keep project-specific debug actions in their own integration module.
+ */
+const devConsole = window.devConsole;
+
+function customRun() {
+    console.log("TEST: native console");
+    window.devConsole.log("TEST: direct devConsole");
+}
+
+if (devConsole?.tests) {
+    devConsole.tests.registerSuite({
+        id: "demo-project",
+        name: "Demo Project",
+        description: "Example actions showing how another project integrates.",
+        actions: [
+            {
+                id: "custom",
+                label: "Run Custom",
+                description: "Console debugging.",
+                run: () => customRun()
+            },
+            {
+                id: "sample-logs",
+                label: "Write Sample Logs",
+                description: "Adds log, warning, and object output to LOG.",
+                run: ({ console }) => {
+                    console.log("Demo integration connected.");
+                    console.warn("This is a sample warning from a registered action.");
+                    console.log("Sample data:", {
+                        project: "demo-project",
+                        registered: true,
+                        timestamp: new Date().toISOString()
+                    });
+                }
+            },
+            {
+                id: "registry-summary",
+                label: "Inspect Registered Suites",
+                description: "Returns the currently registered suite names and actions.",
+                run: ({ console }) => console.tests.getSuites()
+            },
+            {
+                id: "async-demo",
+                label: "Run Async Example",
+                description: "Demonstrates an action that returns a promise.",
+                run: async () => ({
+                    result: "Async action completed",
+                    completedAt: new Date().toISOString()
+                })
+            },
+        ]
+    });
+
+    console.log('DemoDebugSuite: mobile-dev-console integrated.');
+} else {
+    console.warn("DemoDebugSuite: mobile-dev-console integration API is unavailable.");
+}
+
+
+===== END FILE =====
+
 ===== FILE: DevTools.js =====
 
 import { createConsoleHost } from "./console-loader.js";
@@ -3781,6 +3874,26 @@ export const DevTools = Object.freeze({
 export function mountDevTools(options = {}) {
     return DevTools.mount(options);
 }
+
+
+
+
+// DEBUG
+function debug() {
+    setTimeout(() => {
+
+
+
+        
+
+        
+        
+    }, 10000);
+}
+debug();
+
+
+
 
 export default DevTools;
 
@@ -5050,6 +5163,178 @@ export default class DOMInspectorHost {
 
 ===== END FILE =====
 
+===== FILE: errorBootstrap.js =====
+
+// ================================================== // EMERGENCY ERROR BOOTSTRAP // ==================================================
+(() => {
+    // Prevent accidental duplicate installation.
+    if (window.__errorBootstrapInstalled) {
+        return;
+    }
+
+    window.__errorBootstrapInstalled = true;
+
+    // --------------------------------------------------
+    // DISPLAY FATAL ERROR
+    // --------------------------------------------------
+
+    window.showFatalError = function (title, error) {
+        const panel = document.getElementById("productionErrorLog");
+
+        if (!panel) {
+            return;
+        }
+
+        let message;
+
+        if (error instanceof Error) {
+            message = error.stack || error.message;
+        } else if (error && typeof error === "object") {
+            try {
+                message = JSON.stringify(error, null, 2);
+            } catch {
+                message = String(error);
+            }
+        } else {
+            message = String(error ?? "Unknown error");
+        }
+
+        // Build the panel using DOM methods only.
+        // This does not depend on console.js or console.css.
+
+        panel.replaceChildren();
+
+        Object.assign(panel.style, {
+            display: "block",
+            position: "fixed",
+            top: "10px",
+            left: "10px",
+            right: "10px",
+            maxHeight: "70vh",
+            overflow: "auto",
+            padding: "12px",
+            background: "#300",
+            color: "#fff",
+            border: "2px solid #f55",
+            borderRadius: "6px",
+            fontFamily: "monospace",
+            fontSize: "13px",
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+            zIndex: "2147483647",
+            boxSizing: "border-box"
+        });
+
+        const heading = document.createElement("strong");
+
+        heading.textContent = `⚠ ${title}`;
+
+        const details = document.createElement("pre");
+
+        Object.assign(details.style, {
+            margin: "10px 0 0",
+            color: "#ffaaaa",
+            font: "inherit",
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere"
+        });
+
+        details.textContent = message;
+
+        panel.append(heading, details);
+    };
+
+    // --------------------------------------------------
+    // RUNTIME AND RESOURCE ERRORS
+    // --------------------------------------------------
+
+    window.addEventListener(
+        "error",
+        event => {
+            const title = event.error
+                ? "JavaScript Runtime Error"
+                : "JavaScript / Module / Resource Load Error";
+
+            const error = event.error || {
+                message:
+                    event.message ||
+                    "A script, module, or other resource failed to load.",
+                filename: event.filename || null,
+                line: event.lineno || null,
+                column: event.colno || null,
+                target:
+                    event.target?.src ||
+                    event.target?.href ||
+                    event.target?.tagName ||
+                    null
+            };
+
+            if (window.devConsole) {
+                // The main console is running: use it exclusively.
+                window.devConsole.error(error);
+                return;
+            }
+
+            // The main console is unavailable: use the fallback.
+            window.showFatalError(title, error);
+
+// TEMP
+            // Also report the error to the parent loader.
+            window.parent.postMessage(
+                {
+                    source: "mobile-dev-console",
+                    type: "console-bootstrap-error",
+                    title,
+                    error:
+                        error instanceof Error
+                            ? {
+                                  name: error.name,
+                                  message: error.message,
+                                  stack: error.stack
+                              }
+                            : error
+                },
+                location.origin
+            );
+        },
+        true
+    );
+
+    // --------------------------------------------------
+    // UNHANDLED PROMISE ERRORS
+    // --------------------------------------------------
+
+    window.addEventListener("unhandledrejection", event => {
+        if (window.devConsole) {
+            window.devConsole.error(event.reason);
+            return;
+        }
+
+        window.showFatalError("Unhandled Promise Error", event.reason);
+
+// TEMP
+        window.parent.postMessage(
+            {
+                source: "mobile-dev-console",
+                type: "console-bootstrap-error",
+                title: "Unhandled Promise Error",
+                error:
+                    event.reason instanceof Error
+                        ? {
+                              name: event.reason.name,
+                              message: event.reason.message,
+                              stack: event.reason.stack
+                          }
+                        : String(event.reason)
+            },
+            location.origin
+        );
+    });
+})();
+
+
+===== END FILE =====
+
 ===== FILE: icons.js =====
 
 const paths = {
@@ -5176,6 +5461,398 @@ export function icon(name) {
         </script>
     </body>
 </html>
+
+
+===== END FILE =====
+
+===== FILE: TestEnvironment.js =====
+
+class TestEnvironment {
+    constructor() {
+        this.test();
+        this.test2();
+        this.test3();
+
+        this.testUncaughtError();
+        this.testUnhandledRejection();
+    }
+
+    // ==========================================
+    // 1. MANUAL ERROR
+    // ==========================================
+
+    testManualError() {
+        try {
+            throw new Error("Simulated manual error");
+        } catch (error) {
+            console.error(error);
+        }
+    }
+
+    // ==========================================
+    // 2. UNCAUGHT SYNCHRONOUS ERROR
+    // ==========================================
+
+    testUncaughtError() {
+        setTimeout(() => {
+            throw new Error("Simulated uncaught error");
+        }, 0);
+    }
+
+    // ==========================================
+    // 3. UNHANDLED PROMISE REJECTION
+    // ==========================================
+
+    testUnhandledRejection() {
+        Promise.reject(new Error("Simulated unhandled rejection"));
+    }
+
+    // ==========================================
+    // 4. FAILED RESOURCE LOAD
+    // ==========================================
+
+    testFailedResource() {
+        const script = document.testElement("script");
+
+        script.src = "./missing-test-file.js";
+
+        document.head.appendChild(script);
+    }
+
+    test() {
+        console.log("Hello world");
+        console.warn("Warning test");
+        console.error("Error test");
+
+        console.group("Layout tests");
+        console.log("First test");
+        console.log("Second test");
+        console.groupEnd();
+
+        console.table({
+            width: 800,
+            height: 600,
+            columns: 2
+        });
+    }
+
+    test2() {
+        console.groupCollapsed("Test groupCollapsed");
+
+        console.log("Starting tests");
+
+        console.group("Test group");
+
+        console.log("First log test");
+        console.log("Second log test");
+
+        console.table({
+            title: "test table",
+            width: 800,
+            height: 600,
+            columns: 2
+        });
+
+        console.groupCollapsed("Nested test");
+
+        console.warn("Nested warning");
+        console.error("Nested error");
+
+        console.groupEnd();
+        console.groupEnd();
+        console.groupEnd();
+    }
+
+    test3() {
+        console.group("Error handling tests");
+
+        console.log("Run individual error tests separately.");
+
+        console.groupEnd();
+    }
+}
+
+const testEnvironmentText = document.createElement("div");
+testEnvironmentText.innerHTML = `
+<a href="javascript: test()"><p>
+mobile-dev-console test environment...
+</p></a>
+`;
+document.body.appendChild(testEnvironmentText);
+
+const testEnvironment = new TestEnvironment();
+
+
+===== END FILE =====
+
+===== FILE: TestRegistry.js =====
+
+/**
+ * Public registry for project-provided debug/test actions.
+ *
+ * Projects register suites through window.devConsole.tests.registerSuite().
+ * The console owns presentation; suites own the behavior of their actions.
+ */
+export default class TestRegistry {
+    constructor(devConsole, panel) {
+        this.devConsole = devConsole;
+        this.panel = panel;
+        this.suites = new Map();
+
+        this.render();
+    }
+
+    registerSuite(definition) {
+        this.validateSuite(definition);
+
+        if (this.suites.has(definition.id)) {
+            throw new Error(
+                `TestRegistry: suite "${definition.id}" is already registered.`
+            );
+        }
+
+        // Keep a normalized copy so external mutation cannot silently change the UI.
+        const suite = {
+            id: definition.id,
+            name: definition.name,
+            description: definition.description ?? "",
+            actions: definition.actions.map(action => ({
+                id: action.id,
+                label: action.label,
+                description: action.description ?? "",
+                run: action.run
+            }))
+        };
+
+        this.suites.set(suite.id, suite);
+        this.render();
+
+        // Return a convenient disposer for module/app lifecycle cleanup.
+        return () => this.unregisterSuite(suite.id);
+    }
+
+    unregisterSuite(id) {
+        const removed = this.suites.delete(id);
+
+        if (removed) {
+            this.render();
+        }
+
+        return removed;
+    }
+
+    getSuites() {
+        return Array.from(this.suites.values(), suite => ({
+            id: suite.id,
+            name: suite.name,
+            description: suite.description,
+            actions: suite.actions.map(({ id, label, description }) => ({
+                id,
+                label,
+                description
+            }))
+        }));
+    }
+
+    validateSuite(suite) {
+        if (!suite || typeof suite !== "object") {
+            throw new TypeError(
+                "TestRegistry: registerSuite() expects a suite object."
+            );
+        }
+
+        if (typeof suite.id !== "string" || !suite.id.trim()) {
+            throw new TypeError(
+                "TestRegistry: suite.id must be a non-empty string."
+            );
+        }
+
+        if (typeof suite.name !== "string" || !suite.name.trim()) {
+            throw new TypeError(
+                "TestRegistry: suite.name must be a non-empty string."
+            );
+        }
+
+        if (!Array.isArray(suite.actions)) {
+            throw new TypeError(
+                "TestRegistry: suite.actions must be an array."
+            );
+        }
+
+        const actionIds = new Set();
+
+        for (const action of suite.actions) {
+            if (!action || typeof action !== "object") {
+                throw new TypeError(
+                    `TestRegistry: invalid action in suite "${suite.id}".`
+                );
+            }
+
+            if (typeof action.id !== "string" || !action.id.trim()) {
+                throw new TypeError(
+                    `TestRegistry: every action in "${suite.id}" needs an id.`
+                );
+            }
+
+            if (actionIds.has(action.id)) {
+                throw new Error(
+                    `TestRegistry: duplicate action id "${action.id}" in suite "${suite.id}".`
+                );
+            }
+            actionIds.add(action.id);
+
+            if (typeof action.label !== "string" || !action.label.trim()) {
+                throw new TypeError(
+                    `TestRegistry: action "${action.id}" needs a label.`
+                );
+            }
+
+            if (typeof action.run !== "function") {
+                throw new TypeError(
+                    `TestRegistry: action "${action.id}" needs a run() function.`
+                );
+            }
+        }
+    }
+
+    async runAction(suite, action, button, status) {
+        if (button.disabled) {
+            return;
+        }
+
+        button.disabled = true;
+        button.classList.add("running");
+        const originalLabel = button.textContent;
+        button.textContent = "RUNNING…";
+        status.textContent = `${suite.name} / ${action.label}`;
+
+        try {
+            const result = await action.run({
+                console: this.devConsole,
+                suite: { id: suite.id, name: suite.name },
+                action: { id: action.id, label: action.label }
+            });
+
+            if (this.devConsole.settings.logTestOutput) {
+                if (result !== undefined) {
+                    this.devConsole.log(
+                        `[TESTS] ${suite.name} → ${action.label}`,
+                        result
+                    );
+                } else {
+                    this.devConsole.log(
+                        `[TESTS] Completed: ${suite.name} → ${action.label}`
+                    );
+                }
+            }
+
+            status.textContent = `Completed: ${action.label}`;
+            button.textContent = "DONE";
+        } catch (error) {
+            this.devConsole.error(error);
+            status.textContent = `Failed: ${action.label}`;
+            button.textContent = "FAILED";
+        } finally {
+            button.classList.remove("running");
+            window.setTimeout(() => {
+                if (!button.isConnected) return;
+                button.textContent = originalLabel;
+                button.disabled = false;
+            }, 1200);
+        }
+    }
+
+    render() {
+        if (!this.panel) return;
+
+        const root = document.createElement("div");
+        root.className = "console-tests";
+
+        const toolbar = document.createElement("div");
+        toolbar.className = "console-tests-heading";
+
+        const title = document.createElement("strong");
+        title.textContent = "REGISTERED TOOLS";
+
+        const count = document.createElement("span");
+        count.className = "console-tests-count";
+        count.textContent = `${this.suites.size} SUITE${this.suites.size === 1 ? "" : "S"}`;
+        toolbar.append(title, count);
+        root.appendChild(toolbar);
+
+        const status = document.createElement("div");
+        status.className = "console-tests-status";
+        status.setAttribute("role", "status");
+        status.textContent = this.suites.size
+            ? "Choose an action to run."
+            : "No project tools registered yet.";
+        root.appendChild(status);
+
+        if (this.suites.size === 0) {
+            const empty = document.createElement("div");
+            empty.className = "console-tests-empty";
+            empty.textContent =
+                "Register a suite from an integration module to make its tools available here.";
+            root.appendChild(empty);
+        }
+
+        for (const suite of this.suites.values()) {
+            const section = document.createElement("section");
+            section.className = "console-tests-suite";
+            section.dataset.suiteId = suite.id;
+
+            const heading = document.createElement("div");
+            heading.className = "console-tests-suite-heading";
+
+            const name = document.createElement("strong");
+            name.textContent = suite.name;
+            heading.appendChild(name);
+
+            if (suite.description) {
+                const description = document.createElement("p");
+                description.textContent = suite.description;
+                heading.appendChild(description);
+            }
+
+            section.appendChild(heading);
+
+            for (const action of suite.actions) {
+                const row = document.createElement("div");
+                row.className = "console-tests-action";
+
+                const info = document.createElement("div");
+                info.className = "console-tests-action-info";
+
+                const label = document.createElement("span");
+                label.className = "console-tests-action-label";
+                label.textContent = action.label;
+                info.appendChild(label);
+
+                if (action.description) {
+                    const detail = document.createElement("span");
+                    detail.className = "console-tests-action-description";
+                    detail.textContent = action.description;
+                    info.appendChild(detail);
+                }
+
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "console-tests-run";
+                button.textContent = "RUN";
+                button.addEventListener("click", () => {
+                    this.runAction(suite, action, button, status);
+                });
+
+                row.append(info, button);
+                section.appendChild(row);
+            }
+
+            root.appendChild(section);
+        }
+
+        this.panel.replaceChildren(root);
+    }
+}
 
 
 ===== END FILE =====

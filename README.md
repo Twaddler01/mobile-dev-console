@@ -247,16 +247,16 @@ The bootstrap complements this startup error handling; it does not guarantee tha
 
 ### Short term — v1.0.1
 
-- [ ] Persist console settings using `localStorage`.
-- [ ] Continue improving inspector toggling and overlay behavior.
-- [ ] Refine viewport-aware positioning and mobile interaction.
+* Persist console settings using `localStorage`.
+* Continue improving inspector toggling and overlay behavior.
+* Refine viewport-aware positioning and mobile interaction.
 
-### Long term
+### Long term*
 
-- [ ] Execute reusable console command scripts.
-- [ ] Improve WebView integration.
+* Execute reusable console command scripts.
+* Improve WebView integration.
 
-Roadmap items are planned work and may change as development progresses.
+<sub>\* Long term items are planned work and may change as development progresses.</sub>
 
 ## Version history
 
@@ -276,6 +276,10 @@ Roadmap items are planned work and may change as development progresses.
 
 **Repository:** [Twaddler01/mobile-dev-console](https://github.com/Twaddler01/mobile-dev-console)
 
-**Release files:** [GitHub Pages release directory](https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/)
+**Release example page** [GitHub Pages index.html](https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/)
+
+**Bootstrap CDN Link** [https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/errorBootstrap.js](https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/errorBootstrap.js)
+
+**DevTools CDN Link** [https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/DevTools.js](https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/DevTools.js)
 
 Contributions, bug reports, and suggestions for improving mobile debugging workflows are welcome.

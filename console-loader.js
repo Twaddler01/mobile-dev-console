@@ -21,35 +21,192 @@ function ensureConsoleStyles() {
     document.head.appendChild(link);
 }
 
-function createConsoleElement() {
-    const element = document.createElement("div");
-    element.id = "consoleLog";
-    document.body.appendChild(element);
-
-    return element;
-}
-
 /**
  * Public entry point.
  *
  * Overlay: renders Console.js directly in this document.
  * Embedded: renders console-frame.html inside the supplied mount point.
  */
+
+function resolveMountPoint(value) {
+    const fallback = "#devtools";
+
+    function resolve(value) {
+        if (value instanceof Element) return value;
+
+        if (typeof value !== "string" || !value.trim()) {
+            return null;
+        }
+
+        try {
+            return document.querySelector(value);
+        } catch {
+            return null;
+        }
+    }
+
+    const mount = resolve(value) ?? resolve(fallback);
+
+    if (!mount) {
+        throw new TypeError(
+            'No valid mount point found. Provide an element or create a "#devtools" element.'
+        );
+    }
+
+    return mount;
+}
+
+function resolveHeight(value) {
+    const fallback = "60dvh";
+
+    if (
+        typeof value === "string" &&
+        value.trim() &&
+        CSS.supports("height", value.trim())
+    ) {
+        return value.trim();
+    }
+
+    return fallback;
+}
+
+/**
+ * Stable public controller. The active renderer can change without
+ * changing the object returned by DevTools.mount().
+ */
 export function createConsoleHost(options = {}) {
-    const mode = options.mode ?? "overlay";
+    let mode = options.mode ?? "embedded";
 
-    if (mode === "overlay") {
-        return createOverlayConsole(options);
+    if (mode !== "embedded" && mode !== "overlay") {
+        throw new TypeError('mode must be "embedded" or "overlay".');
     }
 
-    if (mode === "embedded") {
-        return createEmbeddedConsole(options);
+    const settings = {
+        ...options,
+        mode,
+        mountPoint: resolveMountPoint(options.mountPoint),
+        height: resolveHeight(options.height),
+        captureConsole: options.captureConsole ?? true,
+        mirrorToNative: options.mirrorToNative ?? mode === "embedded",
+        showCopyButtons: options.showCopyButtons ?? false,
+        allowDragOutsideBounds: options.allowDragOutsideBounds ?? true,
+        logTestOutput: options.logTestOutput ?? true
+    };
+
+    let active = null;
+    let destroyed = false;
+    let switching = false;
+
+    const suites = new Map();
+
+    function mountCurrent() {
+        const mountOptions = {
+            ...settings,
+            mode,
+            onModeToggle: switchMode
+        };
+
+        active =
+            mode === "embedded"
+                ? createEmbeddedConsole(mountOptions)
+                : createOverlayConsole(mountOptions);
+
+        // Restore project test suites after a renderer change.
+        for (const definition of suites.values()) {
+            active.registerSuite(definition);
+        }
     }
 
-    throw new TypeError('mode must be "overlay" or "embedded".');
+    function switchMode() {
+        if (destroyed || switching) return;
+
+        switching = true;
+
+        try {
+            const nextMode = mode === "embedded" ? "overlay" : "embedded";
+
+            active?.destroy();
+            active = null;
+            mode = nextMode;
+            settings.mode = nextMode;
+
+            mountCurrent();
+        } catch (error) {
+            console.error("[DevTools] Could not switch modes:", error);
+        } finally {
+            switching = false;
+        }
+    }
+
+    mountCurrent();
+
+    return {
+        get mode() {
+            return mode;
+        },
+
+        get host() {
+            return active?.host ?? null;
+        },
+
+        get frame() {
+            return active?.frame ?? null;
+        },
+
+        get console() {
+            return active?.console ?? active?.devConsole ?? null;
+        },
+
+        get devConsole() {
+            return active?.devConsole ?? active?.console ?? null;
+        },
+
+        get tests() {
+            return this.devConsole?.tests ?? null;
+        },
+
+        registerSuite(definition) {
+            if (destroyed) {
+                throw new Error("Developer console has been destroyed.");
+            }
+
+            if (suites.has(definition.id)) {
+                throw new Error(
+                    `Suite "${definition.id}" is already registered.`
+                );
+            }
+
+            const unregisterActive = active.registerSuite(definition);
+            suites.set(definition.id, definition);
+
+            return () => {
+                suites.delete(definition.id);
+                return unregisterActive();
+            };
+        },
+
+        unregisterSuite(id) {
+            suites.delete(id);
+            return active?.unregisterSuite(id) ?? false;
+        },
+
+        getSuites() {
+            return active.getSuites();
+        },
+
+        destroy() {
+            if (destroyed) return;
+            destroyed = true;
+
+            active?.destroy();
+            active = null;
+            suites.clear();
+        }
+    };
 }
 
 function createOverlayConsole({
+    onModeToggle,
     captureConsole = true,
     mirrorToNative = false,
     showCopyButtons = false,
@@ -58,15 +215,17 @@ function createOverlayConsole({
 } = {}) {
     ensureConsoleStyles();
 
-    const existingElement = document.getElementById("consoleLog");
-    const consoleElement = existingElement ?? createConsoleElement();
-    const ownsElement = !existingElement;
+    const consoleElement = document.createElement("div");
+    consoleElement.className = "mobile-dev-console-overlay";
+    document.body.appendChild(consoleElement);
+
     const previousDevConsole = window.devConsole;
 
     let consoleInstance;
 
     try {
         consoleInstance = new Console({
+            element: consoleElement,
             mode: "overlay",
             captureConsole,
             mirrorToNative,
@@ -75,12 +234,16 @@ function createOverlayConsole({
             logTestOutput
         });
     } catch (error) {
-        if (ownsElement) {
-            consoleElement.remove();
-        }
-
+        consoleElement.remove();
         throw error;
     }
+
+    const onModeToggleRequest = () => onModeToggle?.();
+
+    consoleElement.addEventListener(
+        "console-mode-toggle-request",
+        onModeToggleRequest
+    );
 
     let destroyed = false;
 
@@ -110,12 +273,13 @@ function createOverlayConsole({
             if (destroyed) return;
             destroyed = true;
 
-            consoleInstance.destroy();
+            consoleElement.removeEventListener(
+                "console-mode-toggle-request",
+                onModeToggleRequest
+            );
 
-            // Only remove an element created by this loader.
-            if (ownsElement) {
-                consoleElement.remove();
-            }
+            consoleInstance.destroy();
+            consoleElement.remove();
 
             if (window.devConsole === consoleInstance) {
                 if (previousDevConsole == null) {
@@ -163,6 +327,7 @@ function serialize(value) {
 }
 
 function createEmbeddedConsole({
+    onModeToggle,
     mountPoint,
     height = "60dvh",
     captureConsole = true,
@@ -550,6 +715,11 @@ function createEmbeddedConsole({
         if (event.data?.source !== CONSOLE_SOURCE) return;
 
         const data = event.data;
+
+        if (data.type === "console-mode-toggle-request") {
+            onModeToggle?.();
+            return;
+        }
 
         if (data.type === "console-ready") {
             if (ready) return;

@@ -15,9 +15,12 @@ export default class DOMInspector {
             throw new Error("DOMInspector: consoleElement is required.");
         }
 
-        if (!window.parentDOMInspector) {
-            throw new Error(
-                "DOMInspector: parent inspection bridge is unavailable."
+        this.parentDOMInspector = window.parentDOMInspector ?? null;
+
+        if (!this.parentDOMInspector) {
+            console.warn(
+                "[DOMInspector] Parent inspection bridge unavailable; " +
+                "DOM inspection is disabled."
             );
         }
 
@@ -173,8 +176,14 @@ export default class DOMInspector {
         if (this.destroyed) {
             throw new Error("DOMInspector has been destroyed.");
         }
-
-        return window.parentDOMInspector.request(action, payload);
+    
+        if (!this.parentDOMInspector) {
+            throw new Error(
+                "DOM inspection is unavailable in this mode."
+            );
+        }
+    
+        return this.parentDOMInspector.request(action, payload);
     }
 
     async refresh({ selectedId = this.selectedId, reveal = false } = {}) {
@@ -714,7 +723,7 @@ export default class DOMInspector {
         );
 
         if (this.picking) {
-            window.parentDOMInspector
+            this.parentDOMInspector
                 ?.request("cancel-picking")
                 .catch(() => {});
         }

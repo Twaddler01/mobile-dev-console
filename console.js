@@ -5,10 +5,14 @@ import TestRegistry from "./TestRegistry.js";
 
 export default class Console {
     constructor(settings = {}) {
-        this.element = document.getElementById("consoleLog");
+        this.element =
+            settings.element ?? document.getElementById("consoleLog");
 
         this.settings = {
+            // Actual validation and fallback happens in createConsoleHost() in console-loader.js
             mode: settings.mode ?? "overlay",
+            mountPoint: settings.mountPoint ?? "#devtools",
+            height: settings.height ?? "60dvh",
             captureConsole: settings.captureConsole ?? true,
             mirrorToNative: settings.mirrorToNative ?? false,
             showCopyButtons: settings.showCopyButtons ?? false,
@@ -122,8 +126,8 @@ export default class Console {
                     id="consolePosition"
                     class="console-icon-button"
                     type="button"
-                    aria-label="Undock developer tools"
-                    title="Undock"
+                    aria-label="Switch to embedded mode"
+                    title="Switch to embedded mode"
                 >${icon("maximize-2")}</button>
 
                 <button
@@ -388,20 +392,47 @@ export default class Console {
             location.reload();
         });
 
-        this.positionButton.addEventListener("click", () => {
+        this.dragHandle.addEventListener("click", () => {
+            if (this.settings.mode !== "overlay") return;
+
             if (this.isDocked) {
                 this.undock();
-            } else {
-                this.dock();
             }
         });
 
+        this.positionButton.addEventListener("click", () => {
+            this.element.dispatchEvent(
+                new CustomEvent("console-mode-toggle-request", {
+                    bubbles: true,
+                    detail: { mode: this.settings.mode }
+                })
+            );
+        });
+/*
         this.toggleButton.addEventListener("click", () => {
             const collapsed = this.element.classList.toggle("collapsed");
 
             this.updateToggleButton(collapsed);
         });
 
+*/
+this.toggleButton.addEventListener("click", () => {
+    const collapsed = this.element.classList.toggle("collapsed");
+
+    this.updateToggleButton(collapsed);
+
+    // Request a repaint after the layout change.
+    requestAnimationFrame(() => {
+        this.element.style.visibility = "hidden";
+
+        requestAnimationFrame(() => {
+            this.element.style.visibility = "visible";
+        });
+    });
+});
+
+
+        
         this.bindTabs();
         this.bindSettings();
         this.bindDragging();
@@ -487,21 +518,20 @@ export default class Console {
     }
 
     updatePositionButton() {
-        const label = this.isDocked ? "Undock" : "Dock";
+        const embedded = this.settings.mode === "embedded";
+        const label = embedded
+            ? "Switch to overlay mode"
+            : "Switch to embedded mode";
 
         this.positionButton.innerHTML = icon(
-            this.isDocked ? "maximize-2" : "minimize-2"
+            embedded ? "minimize-2" : "maximize-2"
         );
-        this.positionButton.setAttribute(
-            "aria-label",
-            `${label} developer tools`
-        );
+
+        this.positionButton.setAttribute("aria-label", label);
         this.positionButton.title = label;
+        this.positionButton.hidden = false;
 
-        const embedded = this.settings.mode === "embedded";
-
-        this.positionButton.hidden = embedded;
-        this.dragHandle.hidden = embedded || this.isDocked;
+        this.dragHandle.hidden = embedded;
     }
 
     updateToggleButton(collapsed) {
@@ -512,6 +542,11 @@ export default class Console {
             "aria-label",
             `${label} developer tools content`
         );
+        this.toggleButton.setAttribute("aria-expanded", String(!collapsed));
+        this.toggleButton.title = label;
+
+        // Only the content collapses. Keep the console root and header mounted.
+        this.element.classList.toggle("collapsed", collapsed);
 
         this.element.dispatchEvent(
             new CustomEvent("console-collapse-changed", {
@@ -519,8 +554,6 @@ export default class Console {
                 detail: { collapsed }
             })
         );
-
-        this.toggleButton.title = label;
     }
 
     // ==========================================

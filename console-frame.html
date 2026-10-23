@@ -9,12 +9,11 @@
         <style>
             html,
             body {
-                width: 100%;
-                height: 100%;
                 margin: 0;
                 padding: 0;
+                width: 100%;
+                height: 100%;
                 overflow: hidden;
-                background: #222;
             }
 
             #consoleLog {
@@ -311,6 +310,14 @@
 
             window.addEventListener("message", handleMessage);
 
+            document.addEventListener("console-mode-toggle-request", () => {
+                postToParent({
+                    type: "console-mode-toggle-request"
+                });
+            });
+
+            const previousDevConsole = window.devConsole;
+
             try {
                 const { default: Console } = await import("./Console.js");
 
@@ -356,6 +363,32 @@
                     message
                 });
             }
+
+            window.addEventListener("pagehide", () => {
+                for (const pending of pendingActions.values()) {
+                    pending.reject(new Error("Console frame was unloaded."));
+                }
+
+                pendingActions.clear();
+
+                for (const pending of pendingInspectorRequests.values()) {
+                    pending.reject(new Error("Console frame was unloaded."));
+                }
+
+                pendingInspectorRequests.clear();
+
+                devConsole?.destroy?.();
+
+                if (devConsole && window.devConsole === devConsole) {
+                    if (previousDevConsole == null) {
+                        delete window.devConsole;
+                    } else {
+                        window.devConsole = previousDevConsole;
+                    }
+                }
+
+                delete window.parentDOMInspector;
+            });
         </script>
     </body>
 </html>

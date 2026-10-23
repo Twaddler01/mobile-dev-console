@@ -1,0 +1,5184 @@
+CODE DUMP
+Project: mobile-dev-console
+Files selected: 10
+========================================
+
+===== FILE: console-frame.html =====
+
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Developer Console</title>
+        <link rel="stylesheet" href="./console.css" />
+
+        <style>
+            html,
+            body {
+                margin: 0;
+                padding: 0;
+                width: 100%;
+                height: 100%;
+                overflow: hidden;
+            }
+
+            #consoleLog {
+                position: relative;
+                inset: auto;
+                width: 100%;
+                height: 100%;
+                min-height: 0;
+                max-height: 100%;
+            }
+        </style>
+    </head>
+
+    <body>
+        <div id="productionErrorLog"></div>
+        <div id="consoleLog"></div>
+
+        <script src="./errorBootstrap.js"></script>
+
+        <script type="module">
+            const CONSOLE_SOURCE = "mobile-dev-console";
+
+            let trustedParentOrigin = null;
+
+            const allowedMethods = new Set([
+                "log",
+                "info",
+                "debug",
+                "warn",
+                "error",
+                "group",
+                "groupCollapsed",
+                "groupEnd",
+                "table",
+                "clear"
+            ]);
+
+            const pendingActions = new Map();
+            let nextActionRequestId = 0;
+            let devConsole;
+            let pendingSettings = null;
+
+            const pendingInspectorRequests = new Map();
+            let nextInspectorRequestId = 1;
+
+            function requestParentInspection(action, payload = {}) {
+                const requestId = `inspect-${nextInspectorRequestId++}`;
+
+                return new Promise((resolve, reject) => {
+                    pendingInspectorRequests.set(requestId, {
+                        resolve,
+                        reject
+                    });
+
+                    postToParent({
+                        type: "inspect-request",
+                        requestId,
+                        action,
+                        payload
+                    });
+                });
+            }
+
+            window.parentDOMInspector = Object.freeze({
+                request: requestParentInspection
+            });
+
+            function postToParent(message) {
+                window.parent.postMessage(
+                    {
+                        source: CONSOLE_SOURCE,
+                        ...message
+                    },
+                    trustedParentOrigin ?? "*"
+                );
+            }
+
+            function requestParentAction(suiteId, actionId) {
+                return new Promise((resolve, reject) => {
+                    nextActionRequestId += 1;
+
+                    const requestId = `frame-action-${nextActionRequestId}`;
+
+                    pendingActions.set(requestId, { resolve, reject });
+
+                    postToParent({
+                        type: "console-action-request",
+                        requestId,
+                        suiteId,
+                        actionId
+                    });
+                });
+            }
+
+            function handleActionResult(data) {
+                const pending = pendingActions.get(data.requestId);
+                if (!pending) return;
+
+                pendingActions.delete(data.requestId);
+
+                if (data.ok) {
+                    pending.resolve(
+                        data.resultUndefined ? undefined : data.result
+                    );
+                    return;
+                }
+
+                const details = data.error || {};
+                const error = new Error(
+                    details.message || "The registered action failed."
+                );
+
+                error.name = details.name || "Error";
+
+                if (details.stack) {
+                    error.stack = details.stack;
+                }
+
+                pending.reject(error);
+            }
+
+            function handleSuiteRegistration(data) {
+                const suite = data.suite;
+
+                try {
+                    if (!suite || !Array.isArray(suite.actions)) {
+                        throw new TypeError(
+                            "Invalid suite registration message."
+                        );
+                    }
+
+                    const actions = suite.actions.map(action => ({
+                        id: action.id,
+                        label: action.label,
+                        description: action.description ?? "",
+
+                        // The callback itself stays in the parent application.
+                        // Only its suite/action IDs cross the bridge.
+                        run: () => requestParentAction(suite.id, action.id)
+                    }));
+
+                    devConsole.tests.registerSuite({
+                        id: suite.id,
+                        name: suite.name,
+                        description: suite.description ?? "",
+                        actions
+                    });
+                } catch (error) {
+                    postToParent({
+                        type: "suite-registration-error",
+                        suiteId: suite?.id,
+                        message: String(error?.message || error)
+                    });
+                }
+            }
+
+            function applyConsoleSettings() {
+                if (!devConsole || !pendingSettings) return false;
+
+                for (const [key, value] of Object.entries(pendingSettings)) {
+                    if (key in devConsole.settings) {
+                        devConsole.updateSetting(key, value);
+                    }
+                }
+
+                pendingSettings = null;
+                return true;
+            }
+
+            function handleMessage(event) {
+                if (event.source !== window.parent) return;
+                if (event.data?.source !== CONSOLE_SOURCE) return;
+
+                const data = event.data;
+
+                // Accept the first initialization message, then lock to that
+                // parent's origin for all subsequent messages.
+                if (trustedParentOrigin === null) {
+                    if (data.type !== "console-init") return;
+                    trustedParentOrigin = event.origin;
+                } else if (event.origin !== trustedParentOrigin) {
+                    return;
+                }
+
+                switch (data.type) {
+                    case "console-parent-connected":
+                        return;
+
+                    case "console-init":
+                        pendingSettings = data.settings ?? {};
+
+                        try {
+                            if (!applyConsoleSettings()) return;
+
+                            postToParent({
+                                type: "console-initialized"
+                            });
+                        } catch (error) {
+                            postToParent({
+                                type: "console-init-error",
+                                message: String(error?.stack || error)
+                            });
+                        }
+
+                        return;
+
+                    case "console-call": {
+                        if (!allowedMethods.has(data.method)) return;
+
+                        const args = Array.isArray(data.args) ? data.args : [];
+
+                        if (typeof devConsole[data.method] === "function") {
+                            devConsole[data.method](...args);
+                        } else if (
+                            data.method === "info" ||
+                            data.method === "debug"
+                        ) {
+                            devConsole.log(...args);
+                        }
+
+                        return;
+                    }
+
+                    case "suite-register":
+                        handleSuiteRegistration(data);
+                        return;
+
+                    case "suite-unregister":
+                        devConsole.tests.unregisterSuite(data.suiteId);
+                        return;
+
+                    case "console-action-result":
+                    case "action-result":
+                        handleActionResult(data);
+                        return;
+
+                    case "registry-get-suites":
+                        try {
+                            postToParent({
+                                type: "registry-suites-result",
+                                requestId: data.requestId,
+                                ok: true,
+                                suites: devConsole.tests.getSuites()
+                            });
+                        } catch (error) {
+                            postToParent({
+                                type: "registry-suites-result",
+                                requestId: data.requestId,
+                                ok: false,
+                                error: {
+                                    message: String(error?.message || error)
+                                }
+                            });
+                        }
+
+                        return;
+
+                    case "inspect-response": {
+                        const pending = pendingInspectorRequests.get(
+                            data.requestId
+                        );
+
+                        if (!pending) {
+                            break;
+                        }
+
+                        pendingInspectorRequests.delete(data.requestId);
+
+                        if (data.ok) {
+                            pending.resolve(data.result);
+                        } else {
+                            pending.reject(
+                                new Error(
+                                    data.error || "Parent inspection failed."
+                                )
+                            );
+                        }
+
+                        break;
+                    }
+
+                    case "inspect-event":
+                        window.dispatchEvent(
+                            new CustomEvent("devtools-inspect-event", {
+                                detail: {
+                                    event: data.event,
+                                    payload: data.payload || {}
+                                }
+                            })
+                        );
+                        break;
+                }
+            }
+
+            window.addEventListener("message", handleMessage);
+
+            document.addEventListener("console-mode-toggle-request", () => {
+                postToParent({
+                    type: "console-mode-toggle-request"
+                });
+            });
+
+            const previousDevConsole = window.devConsole;
+
+            try {
+                const { default: Console } = await import("./Console.js");
+
+                devConsole = new Console({
+                    mode: "embedded",
+                    captureConsole: false,
+                    mirrorToNative: false,
+                    showCopyButtons: false,
+                    allowDragOutsideBounds: false,
+                    logTestOutput: true
+                });
+
+                applyConsoleSettings();
+
+                const consoleElement = document.getElementById("consoleLog");
+
+                consoleElement.addEventListener(
+                    "console-collapse-changed",
+                    event => {
+                        postToParent({
+                            type: "console-collapse-changed",
+                            collapsed: event.detail.collapsed
+                        });
+                    }
+                );
+
+                postToParent({ type: "console-ready" });
+            } catch (error) {
+                const message =
+                    error instanceof Error
+                        ? error.stack || error.message
+                        : String(error);
+
+                const errorLog = document.getElementById("productionErrorLog");
+
+                if (errorLog) {
+                    errorLog.textContent =
+                        "Console initialization failed: " + message;
+                }
+
+                postToParent({
+                    type: "console-init-error",
+                    message
+                });
+            }
+
+            window.addEventListener("pagehide", () => {
+                for (const pending of pendingActions.values()) {
+                    pending.reject(new Error("Console frame was unloaded."));
+                }
+
+                pendingActions.clear();
+
+                for (const pending of pendingInspectorRequests.values()) {
+                    pending.reject(new Error("Console frame was unloaded."));
+                }
+
+                pendingInspectorRequests.clear();
+
+                devConsole?.destroy?.();
+
+                if (devConsole && window.devConsole === devConsole) {
+                    if (previousDevConsole == null) {
+                        delete window.devConsole;
+                    } else {
+                        window.devConsole = previousDevConsole;
+                    }
+                }
+
+                delete window.parentDOMInspector;
+            });
+        </script>
+    </body>
+</html>
+
+
+===== END FILE =====
+
+===== FILE: console-loader.js =====
+
+import Console from "./Console.js";
+import DOMInspectorHost from "./DOMInspectorHost.js";
+
+const CONSOLE_SOURCE = "mobile-dev-console";
+
+const consoleCssUrl = new URL("./console.css", import.meta.url).href;
+const frameUrl = new URL("./console-frame.html", import.meta.url);
+
+const targetOrigin = frameUrl.origin === "null" ? "*" : frameUrl.origin;
+
+function ensureConsoleStyles() {
+    if (document.querySelector("link[data-mobile-dev-console-styles]")) {
+        return;
+    }
+
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = consoleCssUrl;
+    link.dataset.mobileDevConsoleStyles = "";
+
+    document.head.appendChild(link);
+}
+
+function createConsoleElement() {
+    const element = document.createElement("div");
+    element.id = "consoleLog";
+    document.body.appendChild(element);
+
+    return element;
+}
+
+/**
+ * Public entry point.
+ *
+ * Overlay: renders Console.js directly in this document.
+ * Embedded: renders console-frame.html inside the supplied mount point.
+ */
+
+function resolveMountPoint(value) {
+    const fallback = "#devtools";
+
+    function resolve(value) {
+        if (value instanceof Element) return value;
+
+        if (typeof value !== "string" || !value.trim()) {
+            return null;
+        }
+
+        try {
+            return document.querySelector(value);
+        } catch {
+            return null;
+        }
+    }
+
+    const mount = resolve(value) ?? resolve(fallback);
+
+    if (!mount) {
+        throw new TypeError(
+            'No valid mount point found. Provide an element or create a "#devtools" element.'
+        );
+    }
+
+    return mount;
+}
+
+function resolveHeight(value) {
+    const fallback = "60dvh";
+
+    if (
+        typeof value === "string" &&
+        value.trim() &&
+        CSS.supports("height", value.trim())
+    ) {
+        return value.trim();
+    }
+
+    return fallback;
+}
+
+/**
+ * Stable public controller. The active renderer can change without
+ * changing the object returned by DevTools.mount().
+ */
+export function createConsoleHost(options = {}) {
+    let mode = options.mode ?? "embedded";
+
+    if (mode !== "embedded" && mode !== "overlay") {
+        throw new TypeError('mode must be "embedded" or "overlay".');
+    }
+
+    const settings = {
+        ...options,
+        mode,
+        mountPoint: resolveMountPoint(options.mountPoint),
+        height: resolveHeight(options.height),
+        captureConsole: options.captureConsole ?? true,
+        mirrorToNative: options.mirrorToNative ?? mode === "embedded",
+        showCopyButtons: options.showCopyButtons ?? false,
+        allowDragOutsideBounds: options.allowDragOutsideBounds ?? true,
+        logTestOutput: options.logTestOutput ?? true
+    };
+
+    let active = null;
+    let destroyed = false;
+    let switching = false;
+
+    const suites = new Map();
+
+    function mountCurrent() {
+        const mountOptions = {
+            ...settings,
+            mode,
+            onModeToggle: switchMode
+        };
+
+        active =
+            mode === "embedded"
+                ? createEmbeddedConsole(mountOptions)
+                : createOverlayConsole(mountOptions);
+
+        // Restore project test suites after a renderer change.
+        for (const definition of suites.values()) {
+            active.registerSuite(definition);
+        }
+    }
+
+    function switchMode() {
+        if (destroyed || switching) return;
+
+        switching = true;
+
+        try {
+            const nextMode = mode === "embedded" ? "overlay" : "embedded";
+
+            active?.destroy();
+            active = null;
+            mode = nextMode;
+            settings.mode = nextMode;
+
+            mountCurrent();
+        } catch (error) {
+            console.error("[DevTools] Could not switch modes:", error);
+        } finally {
+            switching = false;
+        }
+    }
+
+    mountCurrent();
+
+    return {
+        get mode() {
+            return mode;
+        },
+
+        get host() {
+            return active?.host ?? null;
+        },
+
+        get frame() {
+            return active?.frame ?? null;
+        },
+
+        get console() {
+            return active?.console ?? active?.devConsole ?? null;
+        },
+
+        get devConsole() {
+            return active?.devConsole ?? active?.console ?? null;
+        },
+
+        get tests() {
+            return this.devConsole?.tests ?? null;
+        },
+
+        registerSuite(definition) {
+            if (destroyed) {
+                throw new Error("Developer console has been destroyed.");
+            }
+
+            if (suites.has(definition.id)) {
+                throw new Error(
+                    `Suite "${definition.id}" is already registered.`
+                );
+            }
+
+            const unregisterActive = active.registerSuite(definition);
+            suites.set(definition.id, definition);
+
+            return () => {
+                suites.delete(definition.id);
+                return unregisterActive();
+            };
+        },
+
+        unregisterSuite(id) {
+            suites.delete(id);
+            return active?.unregisterSuite(id) ?? false;
+        },
+
+        getSuites() {
+            return active.getSuites();
+        },
+
+        destroy() {
+            if (destroyed) return;
+            destroyed = true;
+
+            active?.destroy();
+            active = null;
+            suites.clear();
+        }
+    };
+}
+
+function createOverlayConsole({
+    onModeToggle,
+    captureConsole = true,
+    mirrorToNative = false,
+    showCopyButtons = false,
+    allowDragOutsideBounds = true,
+    logTestOutput = true
+} = {}) {
+    ensureConsoleStyles();
+
+    const consoleElement = document.createElement("div");
+    consoleElement.className = "mobile-dev-console-overlay";
+    document.body.appendChild(consoleElement);
+
+    const previousDevConsole = window.devConsole;
+
+    let consoleInstance;
+
+    try {
+        consoleInstance = new Console({
+            element: consoleElement,
+            mode: "overlay",
+            captureConsole,
+            mirrorToNative,
+            showCopyButtons,
+            allowDragOutsideBounds,
+            logTestOutput
+        });
+    } catch (error) {
+        consoleElement.remove();
+        throw error;
+    }
+
+    const onModeToggleRequest = () => onModeToggle?.();
+
+    consoleElement.addEventListener(
+        "console-mode-toggle-request",
+        onModeToggleRequest
+    );
+
+    let destroyed = false;
+
+    const api = {
+        mode: "overlay",
+        host: consoleElement,
+        frame: null,
+
+        console: consoleInstance,
+        devConsole: consoleInstance,
+
+        tests: consoleInstance.tests,
+
+        registerSuite(definition) {
+            return consoleInstance.tests.registerSuite(definition);
+        },
+
+        unregisterSuite(id) {
+            return consoleInstance.tests.unregisterSuite(id);
+        },
+
+        getSuites() {
+            return consoleInstance.tests.getSuites();
+        },
+
+        destroy() {
+            if (destroyed) return;
+            destroyed = true;
+
+            consoleElement.removeEventListener(
+                "console-mode-toggle-request",
+                onModeToggleRequest
+            );
+
+            consoleInstance.destroy();
+            consoleElement.remove();
+
+            if (window.devConsole === consoleInstance) {
+                if (previousDevConsole == null) {
+                    delete window.devConsole;
+                } else {
+                    window.devConsole = previousDevConsole;
+                }
+            }
+        }
+    };
+
+    return api;
+}
+
+function serialize(value) {
+    if (value instanceof Error) {
+        return {
+            name: value.name,
+            message: value.message,
+            stack: value.stack
+        };
+    }
+
+    if (typeof value === "function") {
+        return `[Function: ${value.name || "anonymous"}]`;
+    }
+
+    if (typeof value === "bigint") {
+        return `${value}n`;
+    }
+
+    if (value === undefined) {
+        return "[undefined]";
+    }
+
+    try {
+        return structuredClone(value);
+    } catch {
+        try {
+            return JSON.parse(JSON.stringify(value));
+        } catch {
+            return String(value);
+        }
+    }
+}
+
+function createEmbeddedConsole({
+    onModeToggle,
+    mountPoint,
+    height = "60dvh",
+    captureConsole = true,
+    mirrorToNative = true,
+    showCopyButtons = false,
+    allowDragOutsideBounds = true,
+    logTestOutput = true
+} = {}) {
+    const mount =
+        typeof mountPoint === "string"
+            ? document.querySelector(mountPoint)
+            : mountPoint;
+
+    if (!(mount instanceof Element)) {
+        throw new TypeError(
+            "Embedded mode requires mountPoint to be an element or selector."
+        );
+    }
+
+    const host = document.createElement("div");
+    host.className = "mobile-dev-console-host";
+
+    Object.assign(host.style, {
+        position: "relative",
+        width: "100%",
+        height,
+        minHeight: "0",
+        boxSizing: "border-box"
+    });
+
+    const frame = document.createElement("iframe");
+    frame.title = "Developer Console";
+    frame.src = frameUrl.href;
+
+    Object.assign(frame.style, {
+        display: "block",
+        width: "100%",
+        height: "100%",
+        minHeight: "0",
+        border: "0",
+        flex: "0 0 auto",
+        pointerEvents: "auto"
+    });
+
+    frame.setAttribute("loading", "eager");
+    host.appendChild(frame);
+
+    const onConsoleMessage = event => {
+        if (event.source !== frame.contentWindow) return;
+        if (event.origin !== frameUrl.origin) return;
+        if (event.data?.source !== CONSOLE_SOURCE) return;
+
+        if (event.data.type === "console-collapse-changed") {
+            const collapsed = event.data.collapsed;
+            host.style.height = collapsed ? "40px" : height;
+        }
+    };
+
+    window.addEventListener("message", onConsoleMessage);
+
+    let ready = false;
+    let initialized = false;
+    let destroyed = false;
+    let nextRequestId = 0;
+
+    const queue = [];
+    const suites = new Map();
+    const pendingRegistryRequests = new Map();
+
+    const methods = [
+        "log",
+        "info",
+        "debug",
+        "warn",
+        "error",
+        "group",
+        "groupCollapsed",
+        "groupEnd",
+        "table",
+        "clear"
+    ];
+
+    const originalConsole = {};
+    const installedWrappers = {};
+    let devConsole;
+
+    function postToFrame(message) {
+        if (destroyed) return;
+
+        const payload = {
+            source: CONSOLE_SOURCE,
+            ...message
+        };
+
+        if (!initialized) {
+            queue.push(payload);
+            return;
+        }
+
+        frame.contentWindow?.postMessage(payload, targetOrigin);
+    }
+
+    let inspectorHost = null;
+
+    function sendInspectorEvent(event, payload = {}) {
+        postToFrame({
+            type: "inspect-event",
+            event,
+            payload
+        });
+    }
+
+    inspectorHost = new DOMInspectorHost({
+        document: window.document,
+        mountElement: host,
+
+        onPick({ id, details }) {
+            sendInspectorEvent("picked", { id, details });
+        },
+
+        onPickCancelled() {
+            sendInspectorEvent("pick-cancelled");
+        },
+
+        onSelectionChange({ id, details }) {
+            sendInspectorEvent("selection-changed", {
+                id,
+                details
+            });
+        }
+    });
+
+    function handleInspectorRequest(message) {
+        const { requestId, action, payload = {} } = message;
+
+        try {
+            let result;
+
+            switch (action) {
+                case "get-tree":
+                    result = inspectorHost.getTree();
+                    break;
+
+                case "get-details":
+                    result = inspectorHost.getDetails(payload.id);
+                    break;
+
+                case "select":
+                    result = inspectorHost.select(payload.id);
+                    break;
+
+                case "clear-selection":
+                    inspectorHost.clearSelection();
+                    result = true;
+                    break;
+
+                case "start-picking":
+                    inspectorHost.startPicking();
+                    result = true;
+                    break;
+
+                case "cancel-picking":
+                    inspectorHost.cancelPicking();
+                    result = true;
+                    break;
+
+                default:
+                    throw new Error(`Unknown inspector action: ${action}`);
+            }
+
+            postToFrame({
+                type: "inspect-response",
+                requestId,
+                action,
+                ok: true,
+                result
+            });
+        } catch (error) {
+            postToFrame({
+                type: "inspect-response",
+                requestId,
+                action,
+                ok: false,
+                error: error?.message || String(error)
+            });
+        }
+    }
+
+    function flushQueue() {
+        while (queue.length && initialized && !destroyed) {
+            frame.contentWindow?.postMessage(queue.shift(), targetOrigin);
+        }
+    }
+
+    function send(method, args = []) {
+        postToFrame({
+            type: "console-call",
+            method,
+            args: args.map(serialize)
+        });
+    }
+
+    function makeRequestId(prefix) {
+        nextRequestId += 1;
+        return `${prefix}-${nextRequestId}`;
+    }
+
+    function validateSuite(definition) {
+        if (!definition || typeof definition !== "object") {
+            throw new TypeError("registerSuite() expects a suite object.");
+        }
+
+        if (typeof definition.id !== "string" || !definition.id.trim()) {
+            throw new TypeError("Suite id must be a non-empty string.");
+        }
+
+        if (typeof definition.name !== "string" || !definition.name.trim()) {
+            throw new TypeError("Suite name must be a non-empty string.");
+        }
+
+        if (!Array.isArray(definition.actions)) {
+            throw new TypeError("Suite actions must be an array.");
+        }
+
+        const actionIds = new Set();
+
+        for (const action of definition.actions) {
+            if (!action || typeof action.id !== "string" || !action.id.trim()) {
+                throw new TypeError("Every action needs a non-empty id.");
+            }
+
+            if (actionIds.has(action.id)) {
+                throw new Error(
+                    `Duplicate action id "${action.id}" in suite "${definition.id}".`
+                );
+            }
+
+            actionIds.add(action.id);
+
+            if (typeof action.label !== "string" || !action.label.trim()) {
+                throw new TypeError(`Action "${action.id}" needs a label.`);
+            }
+
+            if (typeof action.run !== "function") {
+                throw new TypeError(
+                    `Action "${action.id}" needs a run() function.`
+                );
+            }
+        }
+    }
+
+    function getSuiteMetadata(suite) {
+        return {
+            id: suite.id,
+            name: suite.name,
+            description: suite.description ?? "",
+            actions: suite.actions.map(action => ({
+                id: action.id,
+                label: action.label,
+                description: action.description ?? ""
+            }))
+        };
+    }
+
+    function registerSuite(definition) {
+        validateSuite(definition);
+
+        if (suites.has(definition.id)) {
+            throw new Error(`Suite "${definition.id}" is already registered.`);
+        }
+
+        // Keep callbacks in the host page. Never try to transfer functions
+        // through postMessage.
+        const suite = {
+            id: definition.id,
+            name: definition.name,
+            description: definition.description ?? "",
+            actions: definition.actions.map(action => ({
+                id: action.id,
+                label: action.label,
+                description: action.description ?? "",
+                run: action.run
+            }))
+        };
+
+        suites.set(suite.id, suite);
+
+        postToFrame({
+            type: "suite-register",
+            suite: getSuiteMetadata(suite)
+        });
+
+        // Matches the familiar TestRegistry disposer pattern.
+        return () => unregisterSuite(suite.id);
+    }
+
+    function unregisterSuite(id) {
+        if (!suites.has(id)) {
+            return false;
+        }
+
+        suites.delete(id);
+
+        postToFrame({
+            type: "suite-unregister",
+            suiteId: id
+        });
+
+        return true;
+    }
+
+    function getSuites() {
+        return new Promise((resolve, reject) => {
+            if (destroyed) {
+                reject(new Error("Developer console has been destroyed."));
+                return;
+            }
+
+            const requestId = makeRequestId("registry");
+
+            pendingRegistryRequests.set(requestId, {
+                resolve,
+                reject
+            });
+
+            postToFrame({
+                type: "registry-get-suites",
+                requestId
+            });
+        });
+    }
+
+    async function runHostAction(message) {
+        const { requestId, suiteId, actionId } = message;
+
+        const suite = suites.get(suiteId);
+        const action = suite?.actions.find(item => item.id === actionId);
+
+        if (!suite || !action) {
+            postToFrame({
+                type: "action-result",
+                requestId,
+                ok: false,
+                error: {
+                    name: "Error",
+                    message: `Action "${suiteId}/${actionId}" is not registered.`
+                }
+            });
+            return;
+        }
+
+        try {
+            const result = await action.run({
+                console: devConsole,
+                suite: {
+                    id: suite.id,
+                    name: suite.name
+                },
+                action: {
+                    id: action.id,
+                    label: action.label
+                }
+            });
+
+            postToFrame({
+                type: "action-result",
+                requestId,
+                ok: true,
+                resultUndefined: result === undefined,
+                result: serialize(result)
+            });
+        } catch (error) {
+            postToFrame({
+                type: "action-result",
+                requestId,
+                ok: false,
+                error: serialize(error)
+            });
+        }
+    }
+
+    function onMessage(event) {
+        if (event.source !== frame.contentWindow) return;
+        if (event.origin !== frameUrl.origin) return;
+        if (event.data?.source !== CONSOLE_SOURCE) return;
+
+        const data = event.data;
+
+        if (data.type === "console-mode-toggle-request") {
+            onModeToggle?.();
+            return;
+        }
+
+        if (data.type === "console-ready") {
+            if (ready) return;
+
+            ready = true;
+
+            // Send initialization directly. It must not wait in the
+            // regular command queue, because that queue waits for initialization.
+            frame.contentWindow?.postMessage(
+                {
+                    source: CONSOLE_SOURCE,
+                    type: "console-init",
+                    settings: {
+                        captureConsole,
+                        mirrorToNative,
+                        showCopyButtons,
+                        allowDragOutsideBounds,
+                        logTestOutput
+                    }
+                },
+                targetOrigin
+            );
+
+            return;
+        }
+
+        if (data.type === "console-initialized") {
+            if (!ready || initialized) return;
+
+            initialized = true;
+            flushQueue();
+
+            postToFrame({
+                type: "console-parent-connected"
+            });
+
+            return;
+        }
+
+        if (data.type === "console-init-error") {
+            const message = ["[Console Initialization Failed]", data.message];
+
+            if (typeof originalConsole.error === "function") {
+                originalConsole.error(...message);
+            }
+
+            for (const pending of pendingRegistryRequests.values()) {
+                pending.reject(
+                    new Error(data.message || "Console initialization failed.")
+                );
+            }
+
+            pendingRegistryRequests.clear();
+            queue.length = 0;
+
+            return;
+        }
+
+        if (data.type === "console-action-request") {
+            void runHostAction(data);
+            return;
+        }
+
+        if (data.type === "registry-suites-result") {
+            const pending = pendingRegistryRequests.get(data.requestId);
+            if (!pending) return;
+
+            pendingRegistryRequests.delete(data.requestId);
+
+            if (data.ok) {
+                pending.resolve(data.suites);
+            } else {
+                pending.reject(
+                    new Error(data.error?.message || "Could not read suites.")
+                );
+            }
+
+            return;
+        }
+
+        if (data.type === "suite-registration-error") {
+            send("error", ["[TESTS] Suite registration failed:", data.message]);
+        }
+
+        if (data.type === "inspect-request") {
+            handleInspectorRequest(data);
+        }
+    }
+
+    window.addEventListener("message", onMessage);
+
+    function onError(event) {
+        send("error", [
+            event.error || {
+                message: event.message,
+                filename: event.filename,
+                line: event.lineno,
+                column: event.colno
+            }
+        ]);
+    }
+
+    function onUnhandledRejection(event) {
+        send("error", ["Unhandled promise rejection:", event.reason]);
+    }
+
+    window.addEventListener("error", onError, true);
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+
+    // Preserve native console output while forwarding it to the iframe.
+    if (captureConsole) {
+        for (const method of methods) {
+            originalConsole[method] = console[method];
+            installedWrappers[method] = (...args) => {
+                send(method, args);
+                if (
+                    mirrorToNative &&
+                    typeof originalConsole[method] === "function"
+                ) {
+                    originalConsole[method].apply(console, args);
+                }
+            };
+            console[method] = installedWrappers[method];
+        }
+    }
+
+    devConsole = {
+        log: (...args) => send("log", args),
+        info: (...args) => send("info", args),
+        debug: (...args) => send("debug", args),
+        warn: (...args) => send("warn", args),
+        error: (...args) => send("error", args),
+        group: (...args) => send("group", args),
+        groupCollapsed: (...args) => send("groupCollapsed", args),
+        groupEnd: () => send("groupEnd"),
+        table: data => send("table", [data]),
+        clear: () => send("clear"),
+        frame,
+
+        tests: {
+            registerSuite,
+            unregisterSuite,
+            getSuites
+        }
+    };
+
+    // Compatibility alias only. New integrations should use the returned instance.
+    const previousGlobalDevConsole = window.devConsole;
+    if (previousGlobalDevConsole == null) {
+        window.devConsole = devConsole;
+    }
+
+    mount.appendChild(host);
+
+    const api = {
+        frame,
+        host,
+        devConsole,
+        mode: "embedded",
+        registerSuite,
+        unregisterSuite,
+        getSuites,
+
+        destroy() {
+            if (destroyed) return;
+            destroyed = true;
+
+            window.removeEventListener("message", onMessage);
+            window.removeEventListener("message", onConsoleMessage);
+            window.removeEventListener("error", onError, true);
+            window.removeEventListener(
+                "unhandledrejection",
+                onUnhandledRejection
+            );
+
+            for (const method of methods) {
+                // Do not overwrite another tool that wrapped console after us.
+                if (
+                    installedWrappers[method] &&
+                    console[method] === installedWrappers[method]
+                ) {
+                    console[method] = originalConsole[method];
+                }
+            }
+
+            for (const pending of pendingRegistryRequests.values()) {
+                pending.reject(
+                    new Error("Developer console has been destroyed.")
+                );
+            }
+
+            pendingRegistryRequests.clear();
+            suites.clear();
+            queue.length = 0;
+
+            inspectorHost?.destroy();
+
+            host.remove();
+
+            if (window.devConsole === devConsole) {
+                if (previousGlobalDevConsole == null) delete window.devConsole;
+                else window.devConsole = previousGlobalDevConsole;
+            }
+        }
+    };
+
+    return api;
+}
+
+
+===== END FILE =====
+
+===== FILE: console.css =====
+
+
+/* ==========================================
+   OVERLAY FRAME
+   ========================================== */
+
+:is(#consoleLog, .mobile-dev-console-overlay) {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: 0;
+
+    display: flex;
+    flex-direction: column;
+
+    width: 100%;
+
+    /* A definite height lets the active panel and log scroller
+       calculate their available space instead of growing indefinitely. */
+    height: 60vh;
+    height: 60dvh;
+    max-height: 60vh;
+    max-height: 60dvh;
+
+    z-index: 99999;
+    box-sizing: border-box;
+    overflow: hidden;
+    pointer-events: auto;
+
+    background: #222;
+    color: #eee;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+}
+
+/* ==========================================
+   OVERLAY HEADER AND ICON CONTROLS
+   ========================================== */
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-header {
+    flex: 0 0 44px;
+    min-height: 44px;
+
+    display: flex;
+    align-items: center;
+    gap: 7px;
+
+    box-sizing: border-box;
+    padding: 0 8px;
+
+    background: #222;
+    color: #fff;
+    border-bottom: 1px solid #444;
+
+    user-select: none;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-title {
+    margin-right: auto;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-icon-button {
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    padding: 0;
+    border: 1px solid #555;
+    border-radius: 7px;
+
+    background: #383838;
+    color: #fff;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-icon-button svg {
+    display: block;
+    width: 20px;
+    height: 20px;
+    pointer-events: none;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-icon-button:active {
+    background: #505050;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-drag-handle {
+    cursor: move;
+    touch-action: none;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-drag-handle[hidden] {
+    display: none;
+}
+
+/* ==========================================
+   MAIN TOOL TABS
+   ========================================== */
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tabs {
+    flex: 0 0 auto;
+
+    display: flex;
+    gap: 4px;
+    padding: 6px 8px;
+
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+
+    background: #292929;
+    border-bottom: 1px solid #444;
+    scrollbar-width: none;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tab {
+    flex: 1 0 auto;
+    min-height: 34px;
+    padding: 6px 12px;
+
+    border: 1px solid #555;
+    border-radius: 5px;
+
+    background: #383838;
+    color: #ddd;
+
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tab.active {
+    background: #3d5afe;
+    border-color: #3d5afe;
+    color: #fff;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tab:focus-visible,
+:is(#consoleLog, .mobile-dev-console-overlay) button:focus-visible {
+    outline: 2px solid #8ea0ff;
+    outline-offset: 2px;
+}
+
+/* ==========================================
+   ACTIVE TAB AREA
+   ========================================== */
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-content {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-panel {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+
+    height: auto;
+    max-height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-panel[hidden] {
+    display: none;
+}
+
+/* ==========================================
+   LOG FOOTER ACTIONS
+   The footer stays visible while output scrolls.
+   ========================================== */
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-log-footer {
+    flex: 0 0 46px;
+    min-height: 46px;
+
+    display: flex;
+    align-items: center;
+    gap: 6px;
+
+    box-sizing: border-box;
+    padding: 0 8px;
+
+    background: #202020;
+    border-top: 1px solid #383838;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-footer-status {
+    color: #737373;
+    font: 10px/1.2 monospace;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-toolbar-spacer {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-action-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+
+    min-height: 30px;
+    padding: 0 7px;
+
+    border: 1px solid #454545;
+    border-radius: 4px;
+
+    background: #292929;
+    color: #c7c7c7;
+
+    font:
+        600 10px/1 Arial,
+        sans-serif;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-action-button svg {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+    pointer-events: none;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-action-button:active,
+:is(#consoleLog, .mobile-dev-console-overlay) .console-action-button.copied {
+    background: #303d32;
+    border-color: #4c8a5a;
+    color: #8fe09e;
+}
+
+/* ==========================================
+   SCROLLABLE LOG OUTPUT
+   ========================================== */
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-output-scroll {
+    flex: 1 1 0%;
+    min-height: 0;
+    max-height: 100%;
+    overflow-y: auto;
+    overflow-x: auto;
+
+    background: #050505;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+#js-console,
+#js-console * {
+    box-sizing: border-box;
+}
+
+#js-console {
+    min-height: 100%;
+    padding: 5px 0 8px;
+    background: #050505;
+    color: #d4d4d4;
+    font:
+        12px/1.55 "SFMono-Regular",
+        Consolas,
+        "Liberation Mono",
+        monospace;
+}
+
+#js-console > div {
+    margin: 0;
+    padding: 2px 9px;
+    border: 0;
+    border-bottom: 1px solid #171717;
+    background: #050505;
+    color: #d4d4d4;
+    font: inherit;
+}
+
+#js-console .log {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow-x: auto;
+    color: #d4d4d4;
+}
+
+#js-console .warn {
+    background: #050505;
+    color: #ffd166;
+    font-weight: 600;
+}
+
+#js-console .error {
+    background: #050505;
+    color: #ff7373;
+    font-weight: 600;
+}
+
+#js-console .prefix {
+    display: inline-block;
+    min-width: 5em;
+    margin-right: 0.8em;
+    color: #79c0ff;
+    opacity: 1;
+}
+
+#js-console .table {
+    position: relative;
+    overflow-x: auto;
+    background: #050505;
+    color: #d4d4d4;
+    font-family: monospace;
+    padding: 4px;
+}
+
+#js-console .table table {
+    color: #fff;
+    border-collapse: collapse;
+    width: max-content;
+    min-width: 100%;
+    font: inherit;
+}
+
+#js-console .table th,
+#js-console .table td {
+    padding: 4px 8px;
+    border: 1px solid #555;
+    text-align: left;
+    vertical-align: top;
+    white-space: pre-wrap;
+}
+
+#js-console .table th {
+    background: #151515;
+    color: #79c0ff;
+    font-weight: bold;
+}
+
+#js-console .table td:first-child,
+#js-console .table th:first-child {
+    color: #bbb;
+    white-space: nowrap;
+}
+
+#js-console .group {
+    background: #050505;
+    color: #79c0ff;
+    font-weight: bold;
+    border-left: 3px solid #888;
+}
+
+#js-console .group-header {
+    padding: 3px 4px;
+    cursor: pointer;
+    user-select: none;
+    font-weight: bold;
+}
+
+#js-console .group-header:hover {
+    background-color: #171717;
+}
+
+#js-console .group-arrow {
+    display: inline-block;
+    width: 1em;
+}
+
+#js-console .group-content {
+    display: block;
+}
+
+#js-console .group.collapsed .group-content {
+    display: none;
+}
+
+#js-console .console-copy {
+    float: right;
+    margin-left: 8px;
+    padding: 2px 6px;
+    font-size: 0.75em;
+    cursor: pointer;
+}
+
+/* ==========================================
+   COLLAPSIBLE ERROR DETAILS
+   ========================================== */
+
+#js-console .error-entry {
+    padding: 4px 0;
+}
+
+#js-console .error-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    cursor: pointer;
+}
+
+#js-console .error-arrow {
+    flex-shrink: 0;
+    font-size: 11px;
+}
+
+#js-console .error-message {
+    flex: 1 1 auto;
+    overflow-wrap: anywhere;
+}
+
+#js-console .error-source {
+    font-size: 0.85em;
+    opacity: 0.75;
+    overflow-wrap: anywhere;
+}
+
+#js-console .error-trace {
+    margin: 6px 0 4px 18px;
+    padding: 8px;
+    border-left: 2px solid currentColor;
+    background: #111;
+}
+
+#js-console .error-trace[hidden] {
+    display: none;
+}
+
+#js-console .error-trace-text {
+    margin: 0 0 8px;
+    font: inherit;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+/* ==========================================
+   PLACEHOLDER TOOL PANELS
+   ========================================== */
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-placeholder {
+    overflow-y: auto;
+    padding: 16px;
+    color: #ddd;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-placeholder strong {
+    color: #fff;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-placeholder p {
+    color: #bbb;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* ==========================================
+   COLLAPSED CONSOLE
+   ========================================== */
+
+:is(#consoleLog, .mobile-dev-console-overlay).collapsed {
+    height: 44px !important;
+    min-height: 44px !important;
+    max-height: 44px !important;
+
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: 0;
+
+    width: 100%;
+    padding: 0;
+    overflow: hidden;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay).collapsed .console-tabs,
+:is(#consoleLog, .mobile-dev-console-overlay).collapsed .console-content {
+    display: none !important;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay).collapsed .console-header {
+    flex: 0 0 44px;
+    min-height: 44px;
+    height: 44px;
+}
+
+/* ==========================================
+   DOM INSPECTOR
+   Kept separate from Console so other inspection
+   adapters can be added without changing its UI.
+   ========================================== */
+
+#consoleInspectPanel {
+    background: #101010;
+    color: #ddd;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 11px;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-inspector {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-inspector-toolbar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+    padding: 7px;
+    background: #202020;
+    border-bottom: 1px solid #383838;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-inspector-button {
+    min-height: 30px;
+    padding: 0 8px;
+    border: 1px solid #484848;
+    border-radius: 4px;
+    background: #303030;
+    color: #ddd;
+    font:
+        600 10px Arial,
+        sans-serif;
+    white-space: nowrap;
+    touch-action: manipulation;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-inspector-button.active {
+    border-color: #33d6e8;
+    background: #12383d;
+    color: #8cf4ff;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-inspector-status {
+    min-width: 0;
+    margin-left: auto;
+    overflow: hidden;
+    color: #999;
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-inspector-workspace {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-tree-pane,
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-details-pane {
+    display: flex;
+    flex: 1 1 50%;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-tree-pane {
+    border-bottom: 1px solid #414141;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-pane-heading {
+    flex: 0 0 auto;
+    padding: 5px 8px;
+    background: #191919;
+    color: #888;
+    font:
+        700 9px Arial,
+        sans-serif;
+    letter-spacing: 0.1em;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-tree-scroll,
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-details-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-tree-node {
+    min-width: max-content;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-tree-row {
+    display: flex;
+    align-items: stretch;
+    min-height: 25px;
+    padding-right: 5px;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-tree-toggle {
+    flex: 0 0 25px;
+    width: 25px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #999;
+    font: 13px monospace;
+    touch-action: manipulation;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-tree-toggle.no-children {
+    color: #555;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-tree-select {
+    min-height: 25px;
+    padding: 3px 5px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: #9cdcfe;
+    font:
+        11px/1.4 "SFMono-Regular",
+        Consolas,
+        monospace;
+    text-align: left;
+    white-space: pre;
+    touch-action: manipulation;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-tree-select.selected {
+    background: #23424b;
+    color: #fff;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-tree-children {
+    padding-left: 13px;
+    border-left: 1px solid #292929;
+    margin-left: 11px;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-tree-children[hidden] {
+    display: none;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-inspector-limit,
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-inspector-empty {
+    padding: 10px;
+    color: #888;
+    font:
+        11px/1.5 Arial,
+        sans-serif;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-detail-section {
+    padding: 7px 9px;
+    border-bottom: 1px solid #292929;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-detail-section h4 {
+    margin: 0 0 6px;
+    color: #79c0ff;
+    font:
+        700 9px Arial,
+        sans-serif;
+    letter-spacing: 0.08em;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-detail-section dl {
+    display: grid;
+    grid-template-columns: minmax(75px, 34%) minmax(0, 1fr);
+    gap: 4px 8px;
+    margin: 0;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-detail-section dt {
+    color: #999;
+    overflow-wrap: anywhere;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .dom-detail-section dd {
+    min-width: 0;
+    margin: 0;
+    color: #ddd;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.dom-inspector-highlight {
+    position: fixed;
+    z-index: 99998;
+    pointer-events: none;
+    border: 2px solid #33e6ff;
+    background: rgba(51, 230, 255, 0.12);
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.8),
+        0 0 12px rgba(51, 230, 255, 0.35);
+}
+
+.dom-inspector-picking,
+.dom-inspector-picking * {
+    cursor: crosshair !important;
+}
+
+@media (min-width: 700px) {
+    :is(#consoleLog, .mobile-dev-console-overlay) .dom-inspector-workspace {
+        flex-direction: row;
+    }
+
+    :is(#consoleLog, .mobile-dev-console-overlay) .dom-tree-pane,
+    :is(#consoleLog, .mobile-dev-console-overlay) .dom-details-pane {
+        flex-basis: 50%;
+    }
+
+    :is(#consoleLog, .mobile-dev-console-overlay) .dom-tree-pane {
+        border-right: 1px solid #414141;
+        border-bottom: 0;
+    }
+}
+
+/* ==========================================
+   PROJECT TEST / DEBUG REGISTRY
+   ========================================== */
+
+#consoleTestsPanel {
+    background: #101010;
+    color: #ddd;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-heading {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    background: #202020;
+    border-bottom: 1px solid #383838;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-heading strong {
+    color: #aaa;
+    font:
+        700 10px Arial,
+        sans-serif;
+    letter-spacing: 0.08em;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-count {
+    margin-left: auto;
+    color: #777;
+    font: 10px monospace;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-status {
+    padding: 8px 10px;
+    border-bottom: 1px solid #252525;
+    color: #79c0ff;
+    font: 10px/1.4 monospace;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-empty {
+    padding: 14px 10px;
+    color: #888;
+    font:
+        12px/1.5 Arial,
+        sans-serif;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-suite {
+    margin: 9px;
+    border: 1px solid #363636;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-suite-heading {
+    padding: 9px 10px;
+    background: #1c1c1c;
+    border-bottom: 1px solid #363636;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-suite-heading strong {
+    color: #e6e6e6;
+    font:
+        700 12px Arial,
+        sans-serif;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-suite-heading p {
+    margin: 4px 0 0;
+    color: #888;
+    font:
+        11px/1.4 Arial,
+        sans-serif;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-action {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px;
+    border-bottom: 1px solid #292929;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-action:last-child {
+    border-bottom: 0;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-action-info {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-action-label {
+    color: #ddd;
+    font:
+        11px Arial,
+        sans-serif;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-action-description {
+    color: #858585;
+    font:
+        10px/1.4 Arial,
+        sans-serif;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-run {
+    flex: 0 0 auto;
+    min-width: 55px;
+    min-height: 30px;
+    padding: 0 9px;
+    border: 1px solid #426b76;
+    border-radius: 4px;
+    background: #19363d;
+    color: #a4edf7;
+    font:
+        700 10px Arial,
+        sans-serif;
+    touch-action: manipulation;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-run:disabled {
+    opacity: 0.7;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-run.running {
+    border-color: #8a7138;
+    background: #3c321b;
+    color: #ffe09a;
+}
+
+
+/* Let the test list grow to its natural content height.
+   The .console-tests root remains the scroll container. */
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-status,
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-empty,
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-suite {
+    flex: 0 0 auto;
+}
+
+/* Keep each action row at its intended height. */
+:is(#consoleLog, .mobile-dev-console-overlay) .console-tests-action {
+    flex: 0 0 auto;
+}
+
+
+/* ==========================================
+   SETTINGS
+   ========================================== */
+
+#consoleSettingsPanel {
+    background: #101010;
+    color: #ddd;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-settings {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-settings-category {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-settings-category + .console-settings-category {
+    border-top: 1px solid #383838;
+    margin-top: 8px;
+    padding-top: 8px;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-settings-heading {
+    padding: 14px 12px;
+    background: #202020;
+    border-bottom: 1px solid #383838;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-settings-heading strong {
+    color: #aaa;
+    font:
+        700 10px Arial,
+        sans-serif;
+    letter-spacing: 0.08em;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-settings-heading p {
+    margin: 6px 0 0;
+    color: #888;
+    font:
+        12px/1.5 Arial,
+        sans-serif;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-setting {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 12px;
+    border-bottom: 1px solid #292929;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-setting input {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    margin: 1px 0 0;
+    accent-color: #3d5afe;
+    cursor: pointer;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-setting-info {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-setting-info strong {
+    color: #e6e6e6;
+    font:
+        600 13px Arial,
+        sans-serif;
+}
+
+:is(#consoleLog, .mobile-dev-console-overlay) .console-setting-info small {
+    color: #929292;
+    font:
+        12px/1.45 Arial,
+        sans-serif;
+}
+
+/* Existing log entries respond to the setting immediately. */
+#js-console.hide-copy-buttons .console-copy {
+    display: none;
+}
+
+
+===== END FILE =====
+
+===== FILE: Console.js =====
+
+import ConsoleOutput from "./ConsoleOutput.js";
+import { icon } from "./icons.js";
+import DOMInspector from "./DOMInspector.js";
+import TestRegistry from "./TestRegistry.js";
+
+export default class Console {
+    constructor(settings = {}) {
+        this.element = settings.element ?? document.getElementById("consoleLog");
+
+        this.settings = {
+            // Actual validation and fallback happens in createConsoleHost() in console-loader.js
+            mode: settings.mode ?? "overlay",
+            mountPoint: settings.mountPoint ?? "#devtools",
+            height: settings.height ?? "60dvh",
+            captureConsole: settings.captureConsole ?? true,
+            mirrorToNative: settings.mirrorToNative ?? false,
+            showCopyButtons: settings.showCopyButtons ?? false,
+            allowDragOutsideBounds: settings.allowDragOutsideBounds ?? true,
+            logTestOutput: settings.logTestOutput ?? true
+        };
+
+        if (!this.element) {
+            throw new Error("Console: #consoleLog element was not found.");
+        }
+
+        this.cleanupCallbacks = [];
+        this.previousDevConsole = window.devConsole;
+
+        this.createUI();
+
+        this.output = new ConsoleOutput(
+            this.element.querySelector("#js-console"),
+            this.settings
+        );
+
+        this.inspector = new DOMInspector({
+            panel: this.element.querySelector("#consoleInspectPanel"),
+            consoleElement: this.element
+        });
+
+        this.tests = new TestRegistry(
+            this,
+            this.element.querySelector("#consoleTestsPanel")
+        );
+
+        this.logElement = this.element.querySelector("#js-console");
+
+        this.logElement.classList.toggle(
+            "hide-copy-buttons",
+            !this.settings.showCopyButtons
+        );
+
+        this.bindAutoScroll();
+        this.bindEvents();
+
+        // Public instance for application debugging.
+        window.devConsole = this;
+
+        // Capture console.log(), console.warn(), etc.
+        if (this.settings.captureConsole) {
+            this.captureNativeConsole();
+        }
+    }
+
+    // ==========================================
+    // AUTO-SCROLL LOG OUTPUT
+    // ==========================================
+
+    bindAutoScroll() {
+        this.outputScroll = this.element.querySelector(
+            ".console-output-scroll"
+        );
+        const logElement = this.element.querySelector("#js-console");
+
+        if (!this.outputScroll || !logElement) {
+            return;
+        }
+
+        // Watch only direct children of the log root. Expanding or collapsing
+        // an existing group can change descendants, but must not trigger scrolling.
+        // A newly appended top-level entry is the only event that auto-scrolls.
+        this.logObserver = new MutationObserver(mutations => {
+            const hasNewEntry = mutations.some(
+                mutation =>
+                    mutation.type === "childList" &&
+                    mutation.addedNodes.length > 0
+            );
+
+            if (!hasNewEntry) {
+                return;
+            }
+
+            // Scroll only the bounded log-output viewport, never the page.
+            this.outputScroll.scrollTo({
+                top: this.outputScroll.scrollHeight,
+                behavior: "auto"
+            });
+        });
+
+        this.logObserver.observe(logElement, {
+            childList: true,
+            subtree: false
+        });
+    }
+
+    // ==========================================
+    // UI
+    // ==========================================
+
+    createUI() {
+        this.element.innerHTML = `
+            <header class="console-header">
+                <span class="console-title">DEV TOOLS</span>
+
+                <button
+                    id="consoleDragHandle"
+                    class="console-icon-button console-drag-handle"
+                    type="button"
+                    aria-label="Drag developer tools"
+                    title="Touch and hold to move"
+                    hidden
+                >${icon("move")}</button>
+
+                <button
+                    id="consolePosition"
+                    class="console-icon-button"
+                    type="button"
+                    aria-label="Switch to embedded mode"
+                    title="Switch to embedded mode"
+                >${icon("maximize-2")}</button>
+
+                <button
+                    id="consoleToggle"
+                    class="console-icon-button"
+                    type="button"
+                    aria-label="Hide developer tools content"
+                    title="Hide"
+                >${icon("eye-off")}</button>
+            </header>
+
+            <nav class="console-tabs" role="tablist" aria-label="Developer tools">
+                <button class="console-tab active" id="consoleTabLog"
+                    data-tab="log" role="tab" aria-controls="consoleLogPanel"
+                    aria-selected="true" type="button">LOG</button>
+                <button class="console-tab" id="consoleTabInspect"
+                    data-tab="inspect" role="tab" aria-controls="consoleInspectPanel"
+                    aria-selected="false" type="button">INSPECT</button>
+                <button class="console-tab" id="consoleTabTests"
+                    data-tab="tests" role="tab" aria-controls="consoleTestsPanel"
+                    aria-selected="false" type="button">TESTS</button>
+                <button class="console-tab" id="consoleTabSettings"
+                    data-tab="settings" role="tab" aria-controls="consoleSettingsPanel"
+                    aria-selected="false" type="button">SETTINGS</button>
+            </nav>
+
+            <div class="console-content">
+                <section id="consoleLogPanel"
+                    class="console-panel active"
+                    data-panel="log" role="tabpanel"
+                    aria-labelledby="consoleTabLog">
+                    <div class="console-output-scroll">
+                        <div id="js-console"></div>
+                    </div>
+                    <footer class="console-log-footer">
+                        <span class="console-footer-status">CONSOLE OUTPUT</span>
+                        <span class="console-toolbar-spacer"></span>
+                        <button id="consoleCopyLog" class="console-action-button"
+                            type="button" title="Copy all log entries">
+                            ${icon("copy")}<span>COPY LOG</span>
+                        </button>
+                        <button id="consoleClear" class="console-action-button"
+                            type="button" title="Clear log output">
+                            ${icon("trash-2")}<span>CLEAR</span>
+                        </button>
+                        <button id="consoleRefresh" class="console-action-button"
+                            type="button" title="Reload page">
+                            ${icon("rotate-cw")}<span>RELOAD</span>
+                        </button>
+                    </footer>
+                </section>
+
+                <section id="consoleInspectPanel"
+                    class="console-panel"
+                    data-panel="inspect" role="tabpanel"
+                    aria-labelledby="consoleTabInspect" hidden>
+                    <!-- DOMInspector owns this panel; adapters can be added later. -->
+                </section>
+
+                <section id="consoleTestsPanel"
+                    class="console-panel"
+                    data-panel="tests" role="tabpanel"
+                    aria-labelledby="consoleTabTests" hidden>
+                    <!-- TestRegistry renders registered project suites here. -->
+                </section>
+
+                <section id="consoleSettingsPanel"
+                    class="console-panel"
+                    data-panel="settings" role="tabpanel"
+                    aria-labelledby="consoleTabSettings" hidden>
+                
+                    <div class="console-settings">
+                        <div class="console-settings-heading">
+                            <strong>CONSOLE PREFERENCES</strong>
+                            <p>Configure logging and developer tools behavior.</p>
+                        </div>
+                
+                        <label class="console-setting">
+                            <input type="checkbox" id="settingCaptureConsole">
+                            <span class="console-setting-info">
+                                <strong>Capture native console</strong>
+                                <small>
+                                    Redirect supported console methods into DEV TOOLS.
+                                </small>
+                            </span>
+                        </label>
+                
+                        <label class="console-setting">
+                            <input type="checkbox" id="settingMirrorToNative">
+                            <span class="console-setting-info">
+                                <strong>Mirror to native console</strong>
+                                <small>
+                                    Also send captured messages to the original browser console.
+                                </small>
+                            </span>
+                        </label>
+                
+                        <label class="console-setting">
+                            <input type="checkbox" id="settingShowCopyButtons">
+                            <span class="console-setting-info">
+                                <strong>Show copy buttons</strong>
+                                <small>
+                                    Add Copy controls to individual log entries and groups.
+                                </small>
+                            </span>
+                        </label>
+                
+                        <label class="console-setting">
+                            <input type="checkbox" id="settingAllowDragOutsideBounds">
+                            <span class="console-setting-info">
+                                <strong>Allow dragging outside bounds</strong>
+                                <small>
+                                    Let the undocked console move beyond screen edges.
+                                </small>
+                            </span>
+                        </label>
+
+                        <div class="console-settings-category">
+                            <div class="console-settings-heading">
+                                <strong>TESTS PREFERENCES</strong>
+                                <p>Configure test runner logging behavior.</p>
+                            </div>
+                        
+                            <label class="console-setting">
+                                <input type="checkbox" id="settingLogTestOutput">
+                                <span class="console-setting-info">
+                                    <strong>Log test output</strong>
+                                    <small>
+                                        Show test results and completion messages in the DEV TOOLS log.
+                                    </small>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                </section>
+
+            </div>
+        `;
+
+        this.header = this.element.querySelector(".console-header");
+        this.dragHandle = this.element.querySelector("#consoleDragHandle");
+        this.clearButton = this.element.querySelector("#consoleClear");
+        this.copyLogButton = this.element.querySelector("#consoleCopyLog");
+        this.refreshButton = this.element.querySelector("#consoleRefresh");
+        this.positionButton = this.element.querySelector("#consolePosition");
+        this.toggleButton = this.element.querySelector("#consoleToggle");
+        this.positionButton.hidden = this.settings.mode === "embedded";
+    }
+
+    // ==========================================
+    // NATIVE CONSOLE CAPTURE
+    // ==========================================
+
+    captureNativeConsole() {
+        if (this.nativeConsole) {
+            return;
+        }
+
+        const methods = [
+            "log",
+            "info",
+            "debug",
+            "warn",
+            "error",
+            "group",
+            "groupCollapsed",
+            "groupEnd",
+            "table"
+        ];
+
+        this.nativeConsole = {};
+
+        for (const method of methods) {
+            this.nativeConsole[method] = console[method].bind(console);
+        }
+
+        this.nativeConsole.clear = console.clear.bind(console);
+
+        for (const method of methods) {
+            console[method] = (...items) => {
+                if (this.settings.mirrorToNative) {
+                    this.nativeConsole[method](...items);
+                }
+
+                if (method === "info" || method === "debug") {
+                    this.output.log(...items);
+                } else {
+                    this.output[method](...items);
+                }
+            };
+        }
+
+        console.clear = () => {
+            this.output.clear();
+
+            if (this.settings.mirrorToNative) {
+                this.nativeConsole.clear();
+            }
+        };
+    }
+
+    restoreNativeConsole() {
+        if (!this.nativeConsole) {
+            return;
+        }
+
+        for (const [method, original] of Object.entries(this.nativeConsole)) {
+            console[method] = original;
+        }
+
+        this.nativeConsole = null;
+    }
+
+    // ==========================================
+    // TABS
+    // ==========================================
+
+    bindTabs() {
+        this.tabButtons = this.element.querySelectorAll("[data-tab]");
+        this.tabPanels = this.element.querySelectorAll("[data-panel]");
+
+        this.tabButtons.forEach(button => {
+            button.addEventListener("click", () => {
+                this.selectTab(button.dataset.tab);
+            });
+        });
+    }
+
+    selectTab(selectedTab) {
+        this.tabButtons.forEach(button => {
+            const active = button.dataset.tab === selectedTab;
+
+            button.classList.toggle("active", active);
+            button.setAttribute("aria-selected", String(active));
+            button.tabIndex = active ? 0 : -1;
+        });
+
+        this.tabPanels.forEach(panel => {
+            const active = panel.dataset.panel === selectedTab;
+
+            panel.classList.toggle("active", active);
+            panel.hidden = !active;
+        });
+
+        this.activeTab = selectedTab;
+    }
+
+    // ==========================================
+    // EVENTS
+    // ==========================================
+
+    bindEvents() {
+        this.clearButton.addEventListener("click", () => {
+            this.output.clear();
+        });
+
+        this.copyLogButton.addEventListener("click", () => {
+            this.copyLog();
+        });
+
+        this.refreshButton.addEventListener("click", () => {
+            location.reload();
+        });
+
+        this.dragHandle.addEventListener("click", () => {
+            if (this.settings.mode !== "overlay") return;
+
+            if (this.isDocked) {
+                this.undock();
+            }
+        });
+
+        this.positionButton.addEventListener("click", () => {
+            this.element.dispatchEvent(
+                new CustomEvent("console-mode-toggle-request", {
+                    bubbles: true,
+                    detail: { mode: this.settings.mode }
+                })
+            );
+        });
+
+        this.toggleButton.addEventListener("click", () => {
+            const collapsed = this.element.classList.toggle("collapsed");
+
+            this.updateToggleButton(collapsed);
+        });
+
+        this.bindTabs();
+        this.bindSettings();
+        this.bindDragging();
+
+        this.activeTab = "log";
+        this.isDocked = true;
+        this.updatePositionButton();
+        this.updateToggleButton(false);
+    }
+
+    // ==========================================
+    // SETTINGS
+    // ==========================================
+
+    bindSettings() {
+        const controls = {
+            captureConsole: this.element.querySelector(
+                "#settingCaptureConsole"
+            ),
+            mirrorToNative: this.element.querySelector(
+                "#settingMirrorToNative"
+            ),
+            showCopyButtons: this.element.querySelector(
+                "#settingShowCopyButtons"
+            ),
+            allowDragOutsideBounds: this.element.querySelector(
+                "#settingAllowDragOutsideBounds"
+            ),
+            logTestOutput: this.element.querySelector("#settingLogTestOutput")
+        };
+
+        // Initialize checkboxes from the current settings.
+        for (const [key, input] of Object.entries(controls)) {
+            input.checked = this.settings[key];
+
+            input.addEventListener("change", () => {
+                this.updateSetting(key, input.checked);
+            });
+        }
+    }
+
+    updateSetting(key, value) {
+        if (!(key in this.settings)) {
+            return;
+        }
+
+        this.settings[key] = value;
+
+        // Keep the matching checkbox synchronized.
+        const controls = {
+            captureConsole: "#settingCaptureConsole",
+            mirrorToNative: "#settingMirrorToNative",
+            showCopyButtons: "#settingShowCopyButtons",
+            allowDragOutsideBounds: "#settingAllowDragOutsideBounds",
+            logTestOutput: "#settingLogTestOutput"
+        };
+
+        const selector = controls[key];
+        if (selector) {
+            const checkbox = this.element.querySelector(selector);
+            if (checkbox) {
+                checkbox.checked = value;
+            }
+        }
+
+        switch (key) {
+            case "captureConsole":
+                if (value) {
+                    this.captureNativeConsole();
+                } else {
+                    this.restoreNativeConsole();
+                }
+                break;
+
+            case "showCopyButtons":
+                this.logElement.classList.toggle("hide-copy-buttons", !value);
+                break;
+
+            // mirrorToNative is read for every captured message.
+            // allowDragOutsideBounds is read during every drag movement.
+            // Both therefore take effect immediately.
+        }
+    }
+
+    updatePositionButton() {
+        const embedded = this.settings.mode === "embedded";
+        const label = embedded
+            ? "Switch to overlay mode"
+            : "Switch to embedded mode";
+
+        this.positionButton.innerHTML = icon(
+            embedded ? "minimize-2" : "maximize-2"
+        );
+
+        this.positionButton.setAttribute("aria-label", label);
+        this.positionButton.title = label;
+        this.positionButton.hidden = false;
+
+        this.dragHandle.hidden = embedded;
+    }
+
+    updateToggleButton(collapsed) {
+        const label = collapsed ? "Show" : "Hide";
+
+        this.toggleButton.innerHTML = icon(collapsed ? "eye" : "eye-off");
+        this.toggleButton.setAttribute(
+            "aria-label",
+            `${label} developer tools content`
+        );
+
+        this.element.dispatchEvent(
+            new CustomEvent("console-collapse-changed", {
+                bubbles: true,
+                detail: { collapsed }
+            })
+        );
+
+        this.toggleButton.title = label;
+    }
+
+    // ==========================================
+    // DRAGGING
+    // ==========================================
+
+    bindDragging() {
+        this.isDocked = true;
+        this.isDragging = false;
+
+        this.dragOffsetX = 0;
+        this.dragOffsetY = 0;
+
+        const onPointerDown = event => {
+            if (
+                this.settings.mode === "embedded" ||
+                this.isDocked ||
+                (event.button !== 0 && event.pointerType === "mouse")
+            ) {
+                return;
+            }
+
+            this.isDragging = true;
+
+            const rect = this.element.getBoundingClientRect();
+
+            this.dragOffsetX = event.clientX - rect.left;
+            this.dragOffsetY = event.clientY - rect.top;
+
+            try {
+                this.dragHandle.setPointerCapture(event.pointerId);
+            } catch {
+                // Document-level pointer listeners are the fallback.
+            }
+
+            event.preventDefault();
+        };
+
+        const onPointerMove = event => {
+            if (!this.isDragging || this.isDocked) return;
+
+            let x = event.clientX - this.dragOffsetX;
+            let y = event.clientY - this.dragOffsetY;
+
+            if (!this.settings.allowDragOutsideBounds) {
+                const rect = this.element.getBoundingClientRect();
+                const maxX = Math.max(0, window.innerWidth - rect.width);
+                const maxY = Math.max(0, window.innerHeight - rect.height);
+
+                x = Math.min(maxX, Math.max(0, x));
+                y = Math.min(maxY, Math.max(0, y));
+            }
+
+            this.element.style.left = `${x}px`;
+            this.element.style.top = `${y}px`;
+            this.element.style.right = "auto";
+            this.element.style.bottom = "auto";
+
+            event.preventDefault();
+        };
+
+        const stopDragging = () => {
+            this.isDragging = false;
+        };
+
+        this.dragHandle.addEventListener("pointerdown", onPointerDown);
+        document.addEventListener("pointermove", onPointerMove);
+        document.addEventListener("pointerup", stopDragging);
+        document.addEventListener("pointercancel", stopDragging);
+
+        this.cleanupCallbacks.push(() => {
+            this.dragHandle.removeEventListener("pointerdown", onPointerDown);
+            document.removeEventListener("pointermove", onPointerMove);
+            document.removeEventListener("pointerup", stopDragging);
+            document.removeEventListener("pointercancel", stopDragging);
+        });
+    }
+
+    undock() {
+        if (!this.isDocked) {
+            return;
+        }
+
+        const rect = this.element.getBoundingClientRect();
+
+        this.element.style.left = `${rect.left}px`;
+        this.element.style.top = `${rect.top}px`;
+        this.element.style.right = "auto";
+        this.element.style.bottom = "auto";
+
+        this.isDocked = false;
+        this.updatePositionButton();
+    }
+
+    dock() {
+        if (this.isDocked) {
+            return;
+        }
+
+        this.isDragging = false;
+        this.isDocked = true;
+
+        this.element.style.left = "0px";
+        this.element.style.top = "auto";
+        this.element.style.right = "0px";
+        this.element.style.bottom = "0px";
+
+        this.updatePositionButton();
+    }
+
+    // ==========================================
+    // COPY LOG OUTPUT
+    // ==========================================
+
+    async copyLog() {
+        const logElement = this.element.querySelector("#js-console");
+        const text = logElement?.innerText?.trimEnd() || "";
+        const button = this.copyLogButton;
+        const label = button.querySelector("span");
+
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+            } else {
+                const textarea = document.createElement("textarea");
+                textarea.value = text;
+                textarea.setAttribute("readonly", "");
+                textarea.style.position = "fixed";
+                textarea.style.opacity = "0";
+                document.body.appendChild(textarea);
+                textarea.select();
+                const copied = document.execCommand("copy");
+                textarea.remove();
+
+                if (!copied) {
+                    throw new Error("Clipboard copy is not available.");
+                }
+            }
+
+            label.textContent = "COPIED";
+            button.classList.add("copied");
+            window.setTimeout(() => {
+                label.textContent = "COPY LOG";
+                button.classList.remove("copied");
+            }, 1400);
+        } catch (error) {
+            label.textContent = "COPY FAILED";
+            window.setTimeout(() => {
+                label.textContent = "COPY LOG";
+            }, 1800);
+        }
+    }
+
+    // ==========================================
+    // PUBLIC LOG API
+    // ==========================================
+
+    log(...items) {
+        this.output.log(...items);
+    }
+
+    warn(...items) {
+        this.output.warn(...items);
+    }
+
+    error(...items) {
+        this.output.error(...items);
+    }
+
+    group(...items) {
+        this.output.group(...items);
+    }
+
+    groupCollapsed(...items) {
+        this.output.groupCollapsed(...items);
+    }
+
+    groupEnd() {
+        this.output.groupEnd();
+    }
+
+    table(data) {
+        this.output.table(data);
+    }
+
+    info(...items) {
+        this.output.log(...items);
+    }
+
+    debug(...items) {
+        this.output.log(...items);
+    }
+
+    clear() {
+        this.output.clear();
+    }
+
+    checkConsoleCapture() {
+        const methods = ["log", "info", "debug", "warn", "error"];
+
+        for (const method of methods) {
+            const current = console[method];
+            const original = this.nativeConsole?.[method];
+
+            this.nativeConsole?.log(
+                `[Capture Check] ${method}:`,
+                current === original ? "ORIGINAL (NOT CAPTURED)" : "REPLACED"
+            );
+        }
+    }
+
+    destroy() {
+        if (this.destroyed) return;
+        this.destroyed = true;
+
+        this.restoreNativeConsole();
+
+        this.logObserver?.disconnect();
+        this.logObserver = null;
+
+        for (const cleanup of this.cleanupCallbacks) {
+            cleanup();
+        }
+
+        this.cleanupCallbacks.length = 0;
+
+        this.inspector?.destroy?.();
+        this.tests?.destroy?.();
+
+        if (window.devConsole === this) {
+            if (this.previousDevConsole == null) {
+                delete window.devConsole;
+            } else {
+                window.devConsole = this.previousDevConsole;
+            }
+        }
+    }
+}
+
+
+===== END FILE =====
+
+===== FILE: ConsoleOutput.js =====
+
+export default class ConsoleOutput {
+    constructor(container, settings = {}) {
+        this.container = container;
+        this.groupStack = [];
+
+        this.settings = settings;
+    }
+
+    // ==========================================
+    // PUBLIC LOG METHODS
+    // ==========================================
+
+    log(...items) {
+        this.render("log", items);
+    }
+
+    warn(...items) {
+        this.render("warn", items);
+    }
+
+    error(...items) {
+        if (items.length === 1 && items[0] instanceof Error) {
+            this.renderError(items[0]);
+            return;
+        }
+
+        this.render("error", items);
+    }
+
+    group(...items) {
+        this.createGroup(false, items);
+    }
+
+    groupCollapsed(...items) {
+        this.createGroup(true, items);
+    }
+
+    groupEnd() {
+        if (this.groupStack.length === 0) {
+            return;
+        }
+
+        this.groupStack.pop();
+    }
+
+    clear() {
+        this.container.replaceChildren();
+        this.groupStack = [];
+    }
+
+    // ==========================================
+    // GROUPS
+    // ==========================================
+
+    createGroup(collapsed, items) {
+        const renderedItems = items.map(item => this.format(item));
+
+        const group = document.createElement("div");
+        group.className = "group";
+
+        const source = this.getSourceLocation();
+        group.dataset.copySource = source ?? "";
+
+        if (collapsed) {
+            group.classList.add("collapsed");
+        }
+
+        const header = document.createElement("div");
+        header.className = "group-header";
+
+        const arrow = document.createElement("span");
+        arrow.className = "group-arrow";
+        arrow.textContent = collapsed ? "▶" : "▼";
+
+        const label = document.createElement("span");
+        label.className = "group-label";
+        label.innerHTML = renderedItems.join(" ");
+
+        header.append(arrow, label);
+
+        header.appendChild(
+            this.createCopyButton(() => this.getCopyText(group))
+        );
+
+        const content = document.createElement("div");
+        content.className = "group-content";
+
+        group.append(header, content);
+
+        header.addEventListener("click", event => {
+            if (event.target.closest(".console-copy")) {
+                return;
+            }
+
+            const isCollapsed = group.classList.toggle("collapsed");
+            arrow.textContent = isCollapsed ? "▶" : "▼";
+        });
+
+        this.append(group);
+
+        this.groupStack.push({
+            group,
+            content
+        });
+    }
+
+    append(element) {
+        if (this.groupStack.length > 0) {
+            const currentGroup = this.groupStack[this.groupStack.length - 1];
+
+            currentGroup.content.appendChild(element);
+            return;
+        }
+
+        this.container.appendChild(element);
+    }
+
+    // ==========================================
+    // TABLE
+    // ==========================================
+
+    table(data) {
+        if (!data || typeof data !== "object") {
+            this.log(data);
+            return;
+        }
+
+        const entries = Object.entries(data);
+
+        if (entries.length === 0) {
+            this.log("(empty table)");
+            return;
+        }
+
+        // Convert each entry into a row with a consistent shape.
+        const rows = entries.map(([index, value]) => {
+            if (value !== null && typeof value === "object") {
+                const cells = {};
+
+                for (const key of Object.keys(value)) {
+                    try {
+                        cells[key] = value[key];
+                    } catch {
+                        cells[key] = "[unreadable]";
+                    }
+                }
+
+                return { index, cells };
+            }
+
+            return {
+                index,
+                cells: { Value: value }
+            };
+        });
+
+        // Collect all columns across every row.
+        const columns = [];
+
+        for (const row of rows) {
+            for (const key of Object.keys(row.cells)) {
+                if (!columns.includes(key)) {
+                    columns.push(key);
+                }
+            }
+        }
+
+        const table = document.createElement("table");
+
+        // --------------------------------------
+        // HEADER
+        // --------------------------------------
+
+        const thead = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+
+        const indexHeader = document.createElement("th");
+        indexHeader.textContent = "(index)";
+        headerRow.appendChild(indexHeader);
+
+        for (const column of columns) {
+            const th = document.createElement("th");
+            th.textContent = column;
+            headerRow.appendChild(th);
+        }
+
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        // --------------------------------------
+        // BODY
+        // --------------------------------------
+
+        const tbody = document.createElement("tbody");
+
+        for (const row of rows) {
+            const tr = document.createElement("tr");
+
+            const indexCell = document.createElement("td");
+            indexCell.textContent = row.index;
+            tr.appendChild(indexCell);
+
+            for (const column of columns) {
+                const td = document.createElement("td");
+                const value = row.cells[column];
+
+                td.textContent =
+                    value === undefined && !(column in row.cells)
+                        ? ""
+                        : this.toPlainText(value);
+
+                tr.appendChild(td);
+            }
+
+            tbody.appendChild(tr);
+        }
+
+        table.appendChild(tbody);
+
+        // --------------------------------------
+        // WRAPPER AND COPY TEXT
+        // --------------------------------------
+
+        const wrapper = document.createElement("div");
+        wrapper.className = "table";
+
+        wrapper.dataset.copyText = [
+            ["(index)", ...columns].join("\t"),
+            ...rows.map(row =>
+                [
+                    row.index,
+                    ...columns.map(column =>
+                        column in row.cells
+                            ? this.toPlainText(row.cells[column])
+                            : ""
+                    )
+                ].join("\t")
+            )
+        ].join("\n");
+
+        wrapper.dataset.copySource = this.getSourceLocation() ?? "";
+
+        wrapper.appendChild(table);
+
+        wrapper.appendChild(
+            this.createCopyButton(() => this.getCopyText(wrapper))
+        );
+
+        this.append(wrapper);
+    }
+
+    // ==========================================
+    // FORMATTING
+    // ==========================================
+
+    format(value) {
+        if (value === null) {
+            return "null";
+        }
+
+        if (value === undefined) {
+            return "undefined";
+        }
+
+        if (value instanceof Error) {
+            return this.htmlEncode(
+                `${value.name}: ${value.message}\n${value.stack ?? ""}`
+            );
+        }
+
+        if (typeof value === "string") {
+            const visible =
+                value.length > 5000 ? value.substring(0, 5000) + "..." : value;
+
+            return this.htmlEncode(visible);
+        }
+
+        if (typeof value === "function") {
+            return this.htmlEncode(value.toString());
+        }
+
+        if (typeof value === "object") {
+            try {
+                const visibleObject = !Array.isArray(value)
+                    ? this.unhideProperties(value)
+                    : value;
+
+                const result = JSON.stringify(visibleObject, null, 2);
+
+                return this.htmlEncode(
+                    result === undefined ? String(value) : result
+                );
+            } catch (error) {
+                return this.htmlEncode(`[Object: ${error.message}]`);
+            }
+        }
+
+        return this.htmlEncode(String(value));
+    }
+
+    unhideProperties(obj) {
+        const result = {};
+
+        for (const key in obj) {
+            try {
+                result[key] = obj[key];
+            } catch {
+                result[key] = "[unreadable]";
+            }
+        }
+
+        return result;
+    }
+
+    htmlEncode(value) {
+        const element = document.createElement("div");
+
+        element.textContent = String(value);
+
+        return element.innerHTML;
+    }
+
+    // ==========================================
+    // RENDER
+    // ==========================================
+
+    render(type, items, prefix) {
+        const renderedItems = items.map(item => this.format(item));
+        const plainText = items.map(item => this.toPlainText(item)).join(" ");
+        const source = this.getSourceLocation();
+
+        const entry = document.createElement("div");
+        entry.className = type;
+
+        // Store clean text and source separately.
+        entry.dataset.copyText = prefix ? `${prefix}\n${plainText}` : plainText;
+
+        entry.dataset.copySource = source ?? "";
+
+        if (prefix) {
+            const prefixElement = document.createElement("span");
+
+            prefixElement.className = "prefix";
+            prefixElement.textContent = prefix;
+
+            entry.appendChild(prefixElement);
+            entry.appendChild(document.createTextNode("\n"));
+        }
+
+        // Formatted values are HTML-encoded by format().
+        const content = document.createElement("span");
+        content.innerHTML = renderedItems.join(" ");
+
+        entry.appendChild(content);
+
+        entry.appendChild(this.createCopyButton(() => this.getCopyText(entry)));
+
+        this.append(entry);
+    }
+
+    // ==========================================
+    // ERROR DETAILS
+    // ==========================================
+
+    renderError(error) {
+        const source = this.getSourceLocation(error);
+
+        const message = `${error.name}: ${error.message}`;
+
+        const trace = error.stack || message;
+
+        const entry = document.createElement("div");
+        entry.className = "error error-entry";
+
+        entry.dataset.copyText = message;
+        entry.dataset.copySource = source ?? "";
+
+        // --------------------------------------
+        // SUMMARY
+        // --------------------------------------
+
+        const header = document.createElement("div");
+        header.className = "error-summary";
+
+        const arrow = document.createElement("span");
+        arrow.className = "error-arrow";
+        arrow.textContent = "▶";
+
+        const label = document.createElement("span");
+        label.className = "error-message";
+        label.textContent = message;
+
+        const sourceLabel = document.createElement("span");
+        sourceLabel.className = "error-source";
+        sourceLabel.textContent = source ?? "";
+
+        header.append(arrow, label, sourceLabel);
+
+        header.appendChild(
+            this.createCopyButton(() => this.getCopyText(entry))
+        );
+
+        // --------------------------------------
+        // COLLAPSIBLE TRACE
+        // --------------------------------------
+
+        const details = document.createElement("div");
+        details.className = "error-trace";
+        details.hidden = true;
+
+        const traceText = document.createElement("pre");
+        traceText.className = "error-trace-text";
+        traceText.textContent = trace;
+
+        details.appendChild(traceText);
+
+        details.appendChild(this.createCopyButton(() => trace));
+
+        // --------------------------------------
+        // TOGGLE
+        // --------------------------------------
+
+        header.addEventListener("click", event => {
+            if (event.target.closest(".console-copy")) {
+                return;
+            }
+
+            details.hidden = !details.hidden;
+
+            entry.classList.toggle("expanded", !details.hidden);
+
+            arrow.textContent = details.hidden ? "▶" : "▼";
+        });
+
+        entry.append(header, details);
+
+        this.append(entry);
+    }
+
+    async copyText(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch (error) {
+            this.error("Failed to copy:", error);
+        }
+    }
+
+    getCopyText(element, depth = 0) {
+        const indent = "    ".repeat(depth);
+
+        // Individual logs, warnings, errors, and tables.
+        if (element.dataset.copyText !== undefined) {
+            const lines = element.dataset.copyText.split("\n");
+
+            const source = element.dataset.copySource;
+
+            if (source && lines.length > 0) {
+                lines[0] += ` [${source}]`;
+            }
+
+            return lines.map(line => indent + line).join("\n");
+        }
+
+        // Groups include their heading and all descendants.
+        if (element.classList.contains("group")) {
+            const label = element.querySelector(
+                ":scope > .group-header .group-label"
+            );
+
+            const content = element.querySelector(":scope > .group-content");
+
+            const lines = [];
+
+            if (label?.textContent) {
+                const source = element.dataset.copySource;
+
+                const heading = source
+                    ? `${label.textContent} [${source}]`
+                    : label.textContent;
+
+                lines.push(indent + heading);
+            }
+
+            if (content) {
+                for (const child of content.children) {
+                    const text = this.getCopyText(child, depth + 1);
+
+                    if (text) {
+                        lines.push(text);
+                    }
+                }
+            }
+
+            return lines.join("\n");
+        }
+
+        // Fallback for other containers.
+        return Array.from(element.children)
+            .map(child => this.getCopyText(child, depth))
+            .filter(Boolean)
+            .join("\n");
+    }
+
+    toPlainText(value) {
+        if (value === null) {
+            return "null";
+        }
+
+        if (value === undefined) {
+            return "undefined";
+        }
+
+        if (value instanceof Error) {
+            return `${value.name}: ${value.message}\n${value.stack ?? ""}`;
+        }
+
+        if (typeof value === "string") {
+            return value;
+        }
+
+        if (typeof value === "function") {
+            return value.toString();
+        }
+
+        if (typeof value === "object") {
+            try {
+                return JSON.stringify(value, null, 2) ?? String(value);
+            } catch {
+                return "[Unserializable object]";
+            }
+        }
+
+        return String(value);
+    }
+
+    createCopyButton(getText) {
+        const button = document.createElement("button");
+
+        button.className = "console-copy";
+        button.textContent = "Copy";
+        button.type = "button";
+
+        button.addEventListener("click", async event => {
+            event.stopPropagation();
+            await this.copyText(getText());
+        });
+
+        return button;
+    }
+
+    getSourceLocation(error = null) {
+        const stack = error?.stack || new Error().stack;
+
+        if (!stack) {
+            return null;
+        }
+
+        const internalFiles = [
+            "ConsoleOutput.js",
+            "Console.js",
+            "errorBootstrap.js"
+        ];
+
+        const frames = stack.split("\n").slice(1);
+
+        for (const rawFrame of frames) {
+            const frame = rawFrame.trim();
+
+            let functionName = "";
+            let url = "";
+            let line = "";
+            let column = "";
+
+            // Chrome / Chromium / Android WebView:
+            // at createLoopTest (http://localhost/file.js:471:9)
+            let match = frame.match(/^at\s+(.+?)\s+\((.+):(\d+):(\d+)\)$/);
+
+            if (match) {
+                functionName = match[1];
+                url = match[2];
+                line = match[3];
+                column = match[4];
+            } else {
+                // Chrome anonymous or direct URL frame:
+                // at http://localhost/file.js:471:9
+                match = frame.match(/^at\s+(.+):(\d+):(\d+)$/);
+
+                if (match) {
+                    url = match[1];
+                    line = match[2];
+                    column = match[3];
+                } else {
+                    // Firefox:
+                    // createLoopTest@http://localhost/file.js:471:9
+                    match = frame.match(/^(.*?)@(.+):(\d+):(\d+)$/);
+
+                    if (!match) {
+                        continue;
+                    }
+
+                    functionName = match[1];
+                    url = match[2];
+                    line = match[3];
+                    column = match[4];
+                }
+            }
+
+            // Ignore frames belonging to the console infrastructure.
+            if (internalFiles.some(file => url.includes(file))) {
+                continue;
+            }
+
+            // Preserve the original URL and useful source coordinates.
+            const location = `${url}:${line}:${column}`;
+
+            return functionName ? `${functionName}@${location}` : location;
+        }
+
+        return null;
+    }
+}
+
+
+===== END FILE =====
+
+===== FILE: DevTools.js =====
+
+import { createConsoleHost } from "./console-loader.js";
+
+/**
+ * Public drop-in API for mobile-dev-console.
+ *
+ *   const tools = DevTools.mount({ mode: "overlay" });
+ *   // or: DevTools.mount({ mode: "embedded", mountPoint: "#devtools" });
+ *   tools.destroy();
+ */
+export const DevTools = Object.freeze({
+    mount(options = {}) {
+        return createConsoleHost(options);
+    }
+});
+
+export function mountDevTools(options = {}) {
+    return DevTools.mount(options);
+}
+
+export default DevTools;
+
+
+/*
+// Default: embedded iframe in #devtools, height 60dvh.
+const tools = DevTools.mount();
+
+// Explicit embedded mode.
+const embedded = DevTools.mount({
+    mode: "embedded",
+    mountPoint: "#devtools",
+    height: "60dvh"
+});
+
+// Explicit overlay mode.
+const overlay = DevTools.mount({
+    mode: "overlay",
+    mountPoint: "#devtools",
+    height: "60dvh"
+});
+
+// Switch using the two-arrow button.
+// Or destroy the controller when finished.
+tools.destroy();
+*/
+
+===== END FILE =====
+
+===== FILE: DOMInspector.js =====
+
+/**
+ * DOMInspector
+ *
+ * Iframe-side UI adapter for the parent-page DOMInspectorHost.
+ * The inspected page's DOM is accessed only through the
+ * parentDOMInspector message bridge.
+ */
+export default class DOMInspector {
+    constructor({ panel, consoleElement, maxNodes = 500 } = {}) {
+        if (!panel) {
+            throw new Error("DOMInspector: panel is required.");
+        }
+
+        if (!consoleElement) {
+            throw new Error("DOMInspector: consoleElement is required.");
+        }
+
+        this.parentDOMInspector = window.parentDOMInspector ?? null;
+
+        if (!this.parentDOMInspector) {
+            console.warn(
+                "[DOMInspector] Parent inspection bridge unavailable; " +
+                "DOM inspection is disabled."
+            );
+        }
+
+        this.panel = panel;
+        this.consoleElement = consoleElement;
+        this.maxNodes = maxNodes;
+
+        this.treeData = null;
+        this.selectedId = null;
+        this.selectedDetails = null;
+        this.picking = false;
+        this.destroyed = false;
+        this.refreshVersion = 0;
+
+        this.renderUI();
+        this.bindEvents();
+
+        this.onInspectorEvent = event => {
+            this.handleInspectorEvent(event.detail);
+        };
+
+        window.addEventListener(
+            "devtools-inspect-event",
+            this.onInspectorEvent
+        );
+
+        this.refresh();
+    }
+
+    // --------------------------------------------------
+    // UI
+    // --------------------------------------------------
+
+    renderUI() {
+        this.panel.innerHTML = `
+            <div class="dom-inspector">
+                <div class="dom-inspector-toolbar">
+                    <button
+                        class="dom-inspector-button"
+                        id="domPickElement"
+                        type="button"
+                    >PICK ELEMENT</button>
+
+                    <button
+                        class="dom-inspector-button"
+                        id="domRefreshTree"
+                        type="button"
+                    >REFRESH</button>
+
+                    <span
+                        class="dom-inspector-status"
+                        id="domInspectorStatus"
+                    >Loading page…</span>
+                </div>
+
+                <div class="dom-inspector-workspace">
+                    <section
+                        class="dom-tree-pane"
+                        aria-label="DOM tree"
+                    >
+                        <div class="dom-pane-heading">
+                            ELEMENT TREE
+                        </div>
+
+                        <div
+                            class="dom-tree-scroll"
+                            id="domTree"
+                        ></div>
+                    </section>
+
+                    <section
+                        class="dom-details-pane"
+                        aria-label="Selected element details"
+                    >
+                        <div class="dom-pane-heading">
+                            ELEMENT DETAILS
+                        </div>
+
+                        <div
+                            class="dom-details-scroll"
+                            id="domDetails"
+                        >
+                            <p class="dom-inspector-empty">
+                                Choose an element from the tree
+                                or use PICK ELEMENT.
+                            </p>
+                        </div>
+                    </section>
+                </div>
+            </div>
+        `;
+
+        this.pickButton = this.panel.querySelector("#domPickElement");
+
+        this.refreshButton = this.panel.querySelector("#domRefreshTree");
+
+        this.status = this.panel.querySelector("#domInspectorStatus");
+
+        this.tree = this.panel.querySelector("#domTree");
+
+        this.details = this.panel.querySelector("#domDetails");
+    }
+
+    bindEvents() {
+        this.pickButton.addEventListener("click", () => {
+            this.setPicking(!this.picking);
+        });
+
+        document.addEventListener(
+            "pointerdown",
+            (this.onPickingPointerDown = event => {
+                if (!this.picking) return;
+
+                // The existing toggle button remains interactive.
+                if (
+                    event.target === this.pickButton ||
+                    this.pickButton.contains(event.target)
+                ) {
+                    return;
+                }
+
+                // Any other interaction inside the console cancels picking.
+                this.setPicking(false);
+            }),
+            true
+        );
+
+        this.refreshButton.addEventListener("click", () => {
+            this.refresh();
+        });
+
+        this.tree.addEventListener("click", event => {
+            const toggle = event.target.closest("[data-dom-toggle]");
+
+            if (toggle && this.tree.contains(toggle)) {
+                this.toggleBranch(toggle);
+                return;
+            }
+
+            const select = event.target.closest("[data-dom-select]");
+
+            if (select && this.tree.contains(select)) {
+                this.selectElement(select.dataset.domSelect, { reveal: false });
+            }
+        });
+    }
+
+    // --------------------------------------------------
+    // Parent bridge
+    // --------------------------------------------------
+
+    async request(action, payload = {}) {
+        if (this.destroyed) {
+            throw new Error("DOMInspector has been destroyed.");
+        }
+    
+        if (!this.parentDOMInspector) {
+            throw new Error(
+                "DOM inspection is unavailable in this mode."
+            );
+        }
+    
+        return this.parentDOMInspector.request(action, payload);
+    }
+
+    async refresh({ selectedId = this.selectedId, reveal = false } = {}) {
+        const version = ++this.refreshVersion;
+
+        this.status.textContent = "Refreshing page tree…";
+        this.refreshButton.disabled = true;
+
+        try {
+            const tree = await this.request("get-tree");
+
+            if (this.destroyed || version !== this.refreshVersion) {
+                return;
+            }
+
+            if (!tree) {
+                throw new Error("The parent page returned an empty DOM tree.");
+            }
+
+            this.treeData = tree;
+            this.renderTree();
+
+            if (selectedId) {
+                const found = this.findNode(this.treeData, selectedId);
+
+                if (found) {
+                    await this.selectElement(selectedId, {
+                        reveal
+                    });
+                } else {
+                    this.selectedId = null;
+                    this.selectedDetails = null;
+                    this.renderSelectedState();
+                    this.renderEmptyDetails();
+                    this.status.textContent = "Select an element";
+                }
+            } else {
+                this.status.textContent = "Select an element";
+            }
+
+            if (this.countNodes(this.treeData) >= this.maxNodes) {
+                const note = document.createElement("div");
+
+                note.className = "dom-inspector-limit";
+                note.textContent = `Tree may be limited to ${this.maxNodes} elements.`;
+
+                this.tree.appendChild(note);
+            }
+        } catch (error) {
+            if (!this.destroyed && version === this.refreshVersion) {
+                this.status.textContent = "Unable to inspect page";
+                this.showError(error);
+            }
+        } finally {
+            if (!this.destroyed && version === this.refreshVersion) {
+                this.refreshButton.disabled = false;
+            }
+        }
+    }
+
+    async selectElement(id, { reveal = false } = {}) {
+        if (!id || this.destroyed) {
+            return;
+        }
+
+        this.status.textContent = "Selecting element…";
+
+        try {
+            const details = await this.request("select", { id });
+
+            if (this.destroyed) {
+                return;
+            }
+
+            if (!details) {
+                this.status.textContent = "Element no longer exists";
+
+                return;
+            }
+
+            this.selectedId = id;
+            this.selectedDetails = details;
+
+            this.renderSelectedState();
+
+            if (reveal) {
+                this.revealNode(id);
+            }
+
+            this.status.textContent = this.describeDetails(details);
+
+            this.renderDetails(details);
+        } catch (error) {
+            if (!this.destroyed) {
+                this.status.textContent = "Unable to select element";
+
+                this.showError(error);
+            }
+        }
+    }
+
+    async setPicking(enabled) {
+        if (this.destroyed) {
+            return;
+        }
+
+        enabled = Boolean(enabled);
+
+        if (this.picking === enabled) {
+            return;
+        }
+
+        // Update the UI immediately.
+        this.picking = enabled;
+        this.updatePickingUI();
+
+        try {
+            const result = await this.request(
+                enabled ? "start-picking" : "cancel-picking"
+            );
+
+            console.log(
+                `[DOMInspector] ${enabled ? "Start" : "Cancel"} picking result:`,
+                result
+            );
+
+            // Don't reset picking here. The parent controls its
+            // completion through picked/pick-cancelled events.
+        } catch (error) {
+            console.error("[DOMInspector] Picking request failed:", error);
+
+            this.picking = false;
+            this.updatePickingUI();
+            this.showError(error);
+        }
+    }
+
+    // --------------------------------------------------
+    // Parent-originated events
+    // --------------------------------------------------
+
+    handleInspectorEvent(message) {
+        if (this.destroyed || !message) {
+            return;
+        }
+
+        console.log("[DOMInspector] Parent event:", message);
+
+        const { event, payload = {} } = message;
+
+        switch (event) {
+            case "picked":
+                this.handlePicked(payload);
+                break;
+
+            case "selection-changed":
+                this.handleSelectionChanged(payload);
+                break;
+
+            case "pick-cancelled":
+                this.picking = false;
+                this.updatePickingUI();
+                break;
+        }
+    }
+
+    async handlePicked({ id, details }) {
+        if (!id) return;
+
+        this.selectedId = id;
+        this.selectedDetails = details || null;
+
+        await this.refresh({
+            selectedId: id,
+            reveal: true
+        });
+
+        // Refreshing and selecting must not end picking mode.
+        if (this.picking) {
+            this.updatePickingUI();
+        }
+    }
+
+    handleSelectionChanged({ id, details }) {
+        this.selectedId = id || null;
+        this.selectedDetails = details || null;
+
+        this.renderSelectedState();
+
+        if (details) {
+            this.status.textContent = this.picking
+                ? "Tap another project element · Cancel to stop"
+                : this.describeDetails(details);
+        } else {
+            this.status.textContent = "Select an element";
+
+            this.renderEmptyDetails();
+        }
+    }
+
+    updatePickingUI() {
+        this.pickButton.classList.toggle("active", this.picking);
+
+        this.pickButton.textContent = this.picking
+            ? "CANCEL PICKING"
+            : "PICK ELEMENT";
+
+        // Keep the picking toggle interactive, but disable other
+        // inspector controls while picking is active.
+        this.refreshButton.style.pointerEvents = this.picking ? "none" : "";
+
+        const workspace = this.panel.querySelector(".dom-inspector-workspace");
+
+        if (workspace) {
+            workspace.style.pointerEvents = this.picking ? "none" : "";
+        }
+
+        this.status.textContent = this.picking
+            ? "Tap project elements to inspect them · Cancel to stop"
+            : this.selectedDetails
+              ? this.describeDetails(this.selectedDetails)
+              : "Select an element";
+    }
+
+    // --------------------------------------------------
+    // Tree rendering
+    // --------------------------------------------------
+
+    renderTree() {
+        this.tree.replaceChildren();
+
+        if (!this.treeData) {
+            return;
+        }
+
+        this.tree.appendChild(this.createTreeNode(this.treeData, true));
+    }
+
+    createTreeNode(data, expanded = false) {
+        const node = document.createElement("div");
+
+        node.className = "dom-tree-node";
+        node.dataset.domElementId = data.id;
+
+        const row = document.createElement("div");
+        row.className = "dom-tree-row";
+
+        const toggle = document.createElement("button");
+
+        toggle.type = "button";
+        toggle.className = "dom-tree-toggle";
+        toggle.dataset.domToggle = "true";
+        toggle.setAttribute("aria-label", "Expand or collapse children");
+
+        const hasChildren =
+            Array.isArray(data.children) && data.children.length > 0;
+
+        toggle.disabled = !hasChildren;
+        toggle.classList.toggle("no-children", !hasChildren);
+
+        toggle.setAttribute("aria-expanded", String(hasChildren && expanded));
+
+        toggle.textContent = !hasChildren ? "·" : expanded ? "▾" : "▸";
+
+        row.appendChild(toggle);
+
+        const select = document.createElement("button");
+
+        select.type = "button";
+        select.className = "dom-tree-select";
+        select.dataset.domSelect = data.id;
+        select.textContent = data.label;
+        select.title = data.label;
+
+        row.appendChild(select);
+        node.appendChild(row);
+
+        if (hasChildren) {
+            const branch = document.createElement("div");
+
+            branch.className = "dom-tree-children";
+            branch.hidden = !expanded;
+
+            for (const child of data.children) {
+                branch.appendChild(this.createTreeNode(child, false));
+            }
+
+            node.appendChild(branch);
+        }
+
+        return node;
+    }
+
+    toggleBranch(toggle) {
+        const node = toggle.closest(".dom-tree-node");
+
+        const branch = node?.querySelector(":scope > .dom-tree-children");
+
+        if (!branch) {
+            return;
+        }
+
+        const expanded = toggle.getAttribute("aria-expanded") === "true";
+
+        toggle.setAttribute("aria-expanded", String(!expanded));
+
+        branch.hidden = expanded;
+        toggle.textContent = expanded ? "▸" : "▾";
+    }
+
+    findNode(node, id) {
+        if (!node) {
+            return null;
+        }
+
+        if (node.id === id) {
+            return node;
+        }
+
+        for (const child of node.children || []) {
+            const found = this.findNode(child, id);
+
+            if (found) {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
+    countNodes(node) {
+        if (!node) {
+            return 0;
+        }
+
+        return (
+            1 +
+            (node.children || []).reduce(
+                (count, child) => count + this.countNodes(child),
+                0
+            )
+        );
+    }
+
+    revealNode(id) {
+        const button = Array.from(
+            this.tree.querySelectorAll("[data-dom-select]")
+        ).find(item => item.dataset.domSelect === id);
+
+        if (!button) {
+            return;
+        }
+
+        let branch = button.closest(".dom-tree-children");
+
+        while (branch && branch !== this.tree) {
+            branch.hidden = false;
+
+            const parentNode = branch.parentElement?.closest(".dom-tree-node");
+
+            const toggle = parentNode?.querySelector(
+                ":scope > .dom-tree-row [data-dom-toggle]"
+            );
+
+            if (toggle) {
+                toggle.textContent = "▾";
+                toggle.setAttribute("aria-expanded", "true");
+            }
+
+            branch =
+                parentNode?.parentElement?.closest(".dom-tree-children") ||
+                null;
+        }
+
+        const scroller = this.tree;
+
+        const itemRect = button.getBoundingClientRect();
+        const scrollRect = scroller.getBoundingClientRect();
+
+        if (itemRect.top < scrollRect.top) {
+            scroller.scrollTop -= scrollRect.top - itemRect.top;
+        } else if (itemRect.bottom > scrollRect.bottom) {
+            scroller.scrollTop += itemRect.bottom - scrollRect.bottom;
+        }
+    }
+
+    renderSelectedState() {
+        this.tree
+            .querySelectorAll(".dom-tree-select.selected")
+            .forEach(button => {
+                button.classList.remove("selected");
+            });
+
+        if (!this.selectedId) {
+            return;
+        }
+
+        const button = Array.from(
+            this.tree.querySelectorAll("[data-dom-select]")
+        ).find(item => item.dataset.domSelect === this.selectedId);
+
+        button?.classList.add("selected");
+    }
+
+    // --------------------------------------------------
+    // Details rendering
+    // --------------------------------------------------
+
+    renderDetails(details) {
+        this.details.replaceChildren();
+
+        const element = details.element || {};
+        const layout = details.layout || {};
+        const style = details.computedStyle || {};
+
+        this.addDetailSection("ELEMENT", [
+            ["Tag", element.tag || "—"],
+            ["ID", element.id || "—"],
+            ["Classes", element.className || "—"],
+            ["Text", element.text || "—"]
+        ]);
+
+        this.addDetailSection("LAYOUT", [
+            ["Position", `${layout.x ?? "—"}, ${layout.y ?? "—"}`],
+            ["Size", `${layout.width ?? "—"} × ${layout.height ?? "—"}`],
+            ["CSS position", layout.position || "—"]
+        ]);
+
+        this.addDetailSection("COMPUTED STYLE", [
+            ["display", style.display || "—"],
+            ["position", style.position || "—"],
+            ["color", style.color || "—"],
+            ["background", style.backgroundColor || "—"],
+            ["font-size", style.fontSize || "—"],
+            ["font-family", style.fontFamily || "—"],
+            ["font-weight", style.fontWeight || "—"],
+            ["margin", style.margin || "—"],
+            ["padding", style.padding || "—"],
+            ["overflow", style.overflow || "—"],
+            ["opacity", style.opacity || "—"]
+        ]);
+
+        if (details.attributes?.length) {
+            this.addDetailSection(
+                "ATTRIBUTES",
+                details.attributes.map(attribute => [
+                    attribute.name,
+                    attribute.value
+                ])
+            );
+        }
+    }
+
+    addDetailSection(title, rows) {
+        const section = document.createElement("section");
+        section.className = "dom-detail-section";
+
+        const heading = document.createElement("h4");
+        heading.textContent = title;
+
+        section.appendChild(heading);
+
+        const list = document.createElement("dl");
+
+        for (const [name, value] of rows) {
+            const term = document.createElement("dt");
+            term.textContent = name;
+
+            const description = document.createElement("dd");
+            description.textContent = String(value ?? "—");
+
+            list.append(term, description);
+        }
+
+        section.appendChild(list);
+        this.details.appendChild(section);
+    }
+
+    renderEmptyDetails() {
+        this.details.replaceChildren();
+
+        const message = document.createElement("p");
+        message.className = "dom-inspector-empty";
+        message.textContent =
+            "Choose an element from the tree or use PICK ELEMENT.";
+
+        this.details.appendChild(message);
+    }
+
+    describeDetails(details) {
+        const element = details?.element;
+
+        if (!element) {
+            return "Select an element";
+        }
+
+        let label = element.tag || "element";
+
+        if (element.id) {
+            label += `#${element.id}`;
+        }
+
+        if (element.className) {
+            label +=
+                "." +
+                element.className.trim().split(/\s+/).slice(0, 3).join(".");
+        }
+
+        return label;
+    }
+
+    showError(error) {
+        this.details.replaceChildren();
+
+        const message = document.createElement("p");
+        message.className = "dom-inspector-empty";
+        message.textContent = error?.message || String(error);
+
+        this.details.appendChild(message);
+    }
+
+    // --------------------------------------------------
+    // Cleanup
+    // --------------------------------------------------
+
+    destroy() {
+        if (this.destroyed) {
+            return;
+        }
+
+        this.destroyed = true;
+        this.refreshVersion++;
+
+        window.removeEventListener(
+            "devtools-inspect-event",
+            this.onInspectorEvent
+        );
+
+        if (this.picking) {
+            this.parentDOMInspector
+                ?.request("cancel-picking")
+                .catch(() => {});
+        }
+
+        this.picking = false;
+        this.treeData = null;
+        this.selectedDetails = null;
+        this.selectedId = null;
+
+        this.panel.replaceChildren();
+
+        document.removeEventListener(
+            "pointerdown",
+            this.onPickingPointerDown,
+            true
+        );
+    }
+}
+
+
+===== END FILE =====
+
+===== FILE: DOMInspectorHost.js =====
+
+/**
+ * Parent-page DOM inspection engine.
+ *
+ * Runs in the host page, not inside the console iframe.
+ * All returned tree/details data is serializable and safe to
+ * send across postMessage.
+ */
+export default class DOMInspectorHost {
+    constructor({
+        document: targetDocument = document,
+        mountElement = null,
+        maxNodes = 500,
+        maxDepth = 40,
+        onPick = null,
+        onPickCancelled = null,
+        onSelectionChange = null
+    } = {}) {
+        if (!targetDocument?.body) {
+            throw new Error(
+                "DOMInspectorHost requires a document with a body."
+            );
+        }
+
+        this.document = targetDocument;
+        this.window = targetDocument.defaultView;
+        this.mountElement = mountElement;
+        this.maxNodes = maxNodes;
+        this.maxDepth = maxDepth;
+
+        this.onPick = onPick;
+        this.onPickCancelled = onPickCancelled;
+        this.onSelectionChange = onSelectionChange;
+
+        this.elementIds = new WeakMap();
+        this.elementsById = new Map();
+        this.nextElementId = 1;
+
+        this.nodeCount = 0;
+        this.selectedId = null;
+        this.picking = false;
+        this.destroyed = false;
+
+        this.highlight = this.createHighlight();
+
+        this.handlePointerDown = this.handlePointerDown.bind(this);
+        this.handleKeyDown = this.handleKeyDown.bind(this);
+        this.updateHighlight = this.updateHighlight.bind(this);
+
+        this.document.addEventListener(
+            "pointerdown",
+            this.handlePointerDown,
+            true
+        );
+
+        this.document.addEventListener("keydown", this.handleKeyDown, true);
+
+        this.window?.addEventListener("resize", this.updateHighlight);
+
+        this.document.addEventListener("scroll", this.updateHighlight, true);
+    }
+
+    // --------------------------------------------------
+    // DOM tree
+    // --------------------------------------------------
+
+    getTree() {
+        this.nodeCount = 0;
+
+        const body = this.document.body;
+
+        if (!body) {
+            return null;
+        }
+
+        // Always retain body as the root, even if it contains
+        // the DevTools mount point.
+        this.nodeCount++;
+
+        const children = [];
+
+        for (const child of body.children) {
+            if (this.nodeCount >= this.maxNodes) {
+                break;
+            }
+
+            const node = this.buildNode(child, 1);
+
+            if (node) {
+                children.push(node);
+            }
+        }
+
+        return {
+            id: this.getElementId(body),
+            label: this.describeElement(body),
+            tag: "body",
+            elementId: body.id || "",
+            className: this.getClassName(body),
+            hasChildren: children.length > 0,
+            children
+        };
+    }
+
+    buildNode(element, depth) {
+        if (
+            !element ||
+            element.nodeType !== 1 ||
+            this.isExcluded(element) ||
+            this.nodeCount >= this.maxNodes
+        ) {
+            return null;
+        }
+
+        this.nodeCount++;
+
+        const id = this.getElementId(element);
+        const children = [];
+
+        if (depth < this.maxDepth) {
+            for (const child of element.children) {
+                if (this.nodeCount >= this.maxNodes) {
+                    break;
+                }
+
+                const node = this.buildNode(child, depth + 1);
+
+                if (node) {
+                    children.push(node);
+                }
+            }
+        }
+
+        return {
+            id,
+            label: this.describeElement(element),
+            tag: element.tagName.toLowerCase(),
+            elementId: element.id || "",
+            className: this.getClassName(element),
+            hasChildren: element.children.length > 0,
+            children
+        };
+    }
+
+    getElementId(element) {
+        let id = this.elementIds.get(element);
+
+        if (!id) {
+            id = `dom-${this.nextElementId++}`;
+
+            this.elementIds.set(element, id);
+            this.elementsById.set(id, element);
+        }
+
+        return id;
+    }
+
+    getElementById(id) {
+        const element = this.elementsById.get(id);
+
+        if (!element || !element.isConnected || this.isExcluded(element)) {
+            return null;
+        }
+
+        return element;
+    }
+
+    describeElement(element) {
+        let label = element.tagName.toLowerCase();
+
+        if (element.id) {
+            label += `#${element.id}`;
+        }
+
+        const className = this.getClassName(element);
+
+        if (className) {
+            label += "." + className.trim().split(/\s+/).slice(0, 3).join(".");
+        }
+
+        return label;
+    }
+
+    getClassName(element) {
+        if (typeof element.className === "string") {
+            return element.className;
+        }
+
+        return element.getAttribute("class") || "";
+    }
+
+    isExcluded(element) {
+        if (!element || element.nodeType !== 1) {
+            return true;
+        }
+
+        if (element.closest?.("[data-devtools-pick-cancel]")) {
+            return true;
+        }
+
+        // Exclude the supplied mount element and its descendants.
+        if (
+            this.mountElement &&
+            (element === this.mountElement ||
+                this.mountElement.contains(element))
+        ) {
+            return true;
+        }
+
+        // Exclude the console's outer mount container, too.
+        if (element.id === "devtools") {
+            return true;
+        }
+
+        if (element.hasAttribute("data-dom-inspector-highlight")) {
+            return true;
+        }
+
+        return [
+            "SCRIPT",
+            "STYLE",
+            "LINK",
+            "META",
+            "TITLE",
+            "NOSCRIPT"
+        ].includes(element.tagName);
+    }
+
+    // --------------------------------------------------
+    // Element details
+    // --------------------------------------------------
+
+    getDetails(id) {
+        const element = this.getElementById(id);
+
+        if (!element) {
+            return null;
+        }
+
+        const style = this.window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+
+        const attributes = Array.from(element.attributes).map(attribute => ({
+            name: attribute.name,
+            value: attribute.value
+        }));
+
+        return {
+            id,
+            element: {
+                tag: element.tagName.toLowerCase(),
+                id: element.id || "",
+                className: this.getClassName(element),
+                text: this.getText(element)
+            },
+
+            layout: {
+                position: style.position,
+                x: this.round(rect.x),
+                y: this.round(rect.y),
+                width: this.round(rect.width),
+                height: this.round(rect.height)
+            },
+
+            computedStyle: {
+                display: style.display,
+                position: style.position,
+                color: style.color,
+                backgroundColor: style.backgroundColor,
+                fontSize: style.fontSize,
+                fontFamily: style.fontFamily,
+                fontWeight: style.fontWeight,
+                margin: style.margin,
+                padding: style.padding,
+                overflow: style.overflow,
+                opacity: style.opacity
+            },
+
+            attributes
+        };
+    }
+
+    getText(element) {
+        return (element.innerText || element.textContent || "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 500);
+    }
+
+    round(value) {
+        return Math.round(value * 100) / 100;
+    }
+
+    // --------------------------------------------------
+    // Selection and highlighting
+    // --------------------------------------------------
+
+    select(id) {
+        const element = this.getElementById(id);
+
+        if (!element) {
+            this.clearSelection();
+            return null;
+        }
+
+        this.selectedId = id;
+        this.updateHighlight();
+
+        const details = this.getDetails(id);
+
+        this.onSelectionChange?.({
+            id,
+            details
+        });
+
+        return details;
+    }
+
+    clearSelection() {
+        this.selectedId = null;
+
+        if (this.highlight) {
+            this.highlight.style.display = "none";
+        }
+
+        this.onSelectionChange?.({
+            id: null,
+            details: null
+        });
+    }
+
+    createHighlight() {
+        const highlight = this.document.createElement("div");
+
+        highlight.setAttribute("data-dom-inspector-highlight", "");
+
+        Object.assign(highlight.style, {
+            position: "fixed",
+            display: "none",
+            pointerEvents: "none",
+            zIndex: "2147483646",
+            boxSizing: "border-box",
+            border: "2px solid #38bdf8",
+            background: "rgba(56, 189, 248, 0.12)",
+            borderRadius: "2px",
+            margin: "0",
+            padding: "0"
+        });
+
+        this.document.body.appendChild(highlight);
+
+        return highlight;
+    }
+
+    updateHighlight() {
+        if (!this.highlight || !this.selectedId) {
+            return;
+        }
+
+        const element = this.getElementById(this.selectedId);
+
+        if (!element) {
+            this.highlight.style.display = "none";
+            return;
+        }
+
+        const rect = element.getBoundingClientRect();
+
+        Object.assign(this.highlight.style, {
+            display: "block",
+            left: `${rect.left}px`,
+            top: `${rect.top}px`,
+            width: `${rect.width}px`,
+            height: `${rect.height}px`
+        });
+    }
+
+    // --------------------------------------------------
+    // Element picking
+    // --------------------------------------------------
+
+    startPicking() {
+        if (this.destroyed || this.picking) {
+            return;
+        }
+
+        this.picking = true;
+
+        this.document.documentElement.classList.add("dom-inspector-picking");
+    }
+
+    cancelPicking() {
+        if (!this.picking) {
+            return;
+        }
+
+        this.picking = false;
+
+        this.document.documentElement.classList.remove("dom-inspector-picking");
+
+        this.onPickCancelled?.();
+    }
+
+    handlePointerDown(event) {
+        if (!this.picking || this.destroyed) {
+            return;
+        }
+
+        const target = event.target;
+
+        // Taps outside the inspectable project area cancel picking.
+        if (
+            !target ||
+            target.nodeType !== 1 ||
+            target === this.document.documentElement ||
+            target === this.document.body ||
+            this.isExcluded(target)
+        ) {
+            this.cancelPicking();
+            return;
+        }
+
+        // Select the element without activating the underlying page.
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+
+        const id = this.getElementId(target);
+        const details = this.select(id);
+
+        // IMPORTANT: do not clear this.picking here.
+        // The user can select another element immediately.
+        this.onPick?.({
+            id,
+            details
+        });
+    }
+
+    handleKeyDown(event) {
+        if (!this.picking || event.key !== "Escape") {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+
+        this.cancelPicking();
+    }
+
+    // --------------------------------------------------
+    // Cleanup
+    // --------------------------------------------------
+
+    destroy() {
+        if (this.destroyed) {
+            return;
+        }
+
+        this.destroyed = true;
+        this.picking = false;
+
+        this.document.documentElement.classList.remove("dom-inspector-picking");
+
+        this.document.removeEventListener(
+            "pointerdown",
+            this.handlePointerDown,
+            true
+        );
+
+        this.document.removeEventListener("keydown", this.handleKeyDown, true);
+
+        this.window?.removeEventListener("resize", this.updateHighlight);
+
+        this.document.removeEventListener("scroll", this.updateHighlight, true);
+
+        this.highlight?.remove();
+
+        this.highlight = null;
+        this.selectedId = null;
+
+        this.elementsById.clear();
+        this.elementIds = new WeakMap();
+    }
+}
+
+
+===== END FILE =====
+
+===== FILE: icons.js =====
+
+const paths = {
+    move: `
+        <path d="M12 2v20"/>
+        <path d="m8 6 4-4 4 4"/>
+        <path d="m8 18 4 4 4-4"/>
+        <path d="M2 12h20"/>
+        <path d="m6 8-4 4 4 4"/>
+        <path d="m18 8 4 4-4 4"/>
+    `,
+    "maximize-2": `
+        <polyline points="15 3 21 3 21 9"/>
+        <polyline points="9 21 3 21 3 15"/>
+        <line x1="21" y1="3" x2="14" y2="10"/>
+        <line x1="3" y1="21" x2="10" y2="14"/>
+    `,
+    "minimize-2": `
+        <polyline points="4 14 10 14 10 20"/>
+        <polyline points="20 10 14 10 14 4"/>
+        <line x1="14" y1="10" x2="21" y2="3"/>
+        <line x1="3" y1="21" x2="10" y2="14"/>
+    `,
+    "eye-off": `
+        <path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c5.5 0 9 5 10 8a13.8 13.8 0 0 1-3 4.4"/>
+        <path d="M6.6 6.6A14.2 14.2 0 0 0 2 12c1 3 4.5 8 10 8a10.5 10.5 0 0 0 5.1-1.3"/>
+        <path d="m3 3 18 18"/>
+        <path d="M10 10a2.8 2.8 0 0 0 4 4"/>
+    `,
+    eye: `
+        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>
+        <circle cx="12" cy="12" r="3"/>
+    `,
+    copy: `
+        <rect x="8" y="8" width="13" height="13" rx="2"/>
+        <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>
+    `,
+    "trash-2": `
+        <path d="M3 6h18"/>
+        <path d="M8 6V4h8v2"/>
+        <path d="m19 6-1 14H6L5 6"/>
+        <path d="M10 11v5M14 11v5"/>
+    `,
+    "rotate-cw": `
+        <path d="M20 7v5h-5"/>
+        <path d="M20 12a8 8 0 1 0 2 5"/>
+    `
+};
+
+export function icon(name) {
+    const content = paths[name];
+
+    if (!content) {
+        throw new Error(`Unknown console icon: ${name}`);
+    }
+
+    return `
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+            focusable="false"
+        >${content}</svg>
+    `;
+}
+
+
+===== END FILE =====
+
+===== FILE: index.html =====
+
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>mobile-dev-console</title>
+        <link rel="stylesheet" href="./console.css" />
+    </head>
+
+    <body>
+        <!-- Needed for console elements. -->
+        <div id="productionErrorLog"></div>
+        <div id="consoleLog"></div>
+
+        <!-- For TestEnvironment / your other scripts -->
+        <div id="main" style="flex: 1"></div>
+
+        <!-- Install error listeners first. -->
+        <script src="./errorBootstrap.js"></script>
+
+        <!-- Initialize the console before integrations and the application. -->
+        <script type="module">
+            try {
+                const { default: Console } = await import("./Console.js");
+
+                new Console({
+                    captureConsole: true,
+                    mirrorToNative: false,
+                    showCopyButtons: false,
+                    allowDragOutsideBounds: true
+                });
+
+                // Register example tools after the public console API exists.
+                await import("./DemoDebugSuite.js");
+
+                // Load the app only after console integrations are ready.
+                // Replace TestEnvironment.js with your application entry point as needed.
+                await import("./TestEnvironment.js");
+            } catch (error) {
+                if (window.devConsole) {
+                    window.devConsole.error(error);
+                } else {
+                    window.showFatalError("Application Startup Failed", error);
+                }
+            }
+        </script>
+    </body>
+</html>
+
+
+===== END FILE =====
+
+========================================
+END CODE DUMP

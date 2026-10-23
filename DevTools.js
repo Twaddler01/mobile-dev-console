@@ -17,23 +17,48 @@ export function mountDevTools(options = {}) {
     return DevTools.mount(options);
 }
 
+
+
+
+// DEBUG
+function debug() {
+    setTimeout(() => {
+
+
+
+        
+
+        
+        
+    }, 10000);
+}
+debug();
+
+
+
+
 export default DevTools;
 
 
 /*
-// Direct console in the current page; no iframe.
-const overlay = DevTools.mount({
-    mode: "overlay"
-});
+// Default: embedded iframe in #devtools, height 60dvh.
+const tools = DevTools.mount();
 
-// Console in a separate iframe inside a container.
+// Explicit embedded mode.
 const embedded = DevTools.mount({
     mode: "embedded",
     mountPoint: "#devtools",
     height: "60dvh"
 });
 
-// Later:
-overlay.destroy();
-embedded.destroy();
+// Explicit overlay mode.
+const overlay = DevTools.mount({
+    mode: "overlay",
+    mountPoint: "#devtools",
+    height: "60dvh"
+});
+
+// Switch using the two-arrow button.
+// Or destroy the controller when finished.
+tools.destroy();
 */

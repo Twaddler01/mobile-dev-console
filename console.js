@@ -54,6 +54,10 @@ export default class Console {
         this.bindAutoScroll();
         this.bindEvents();
 
+        if (this.settings.mode === "overlay") {
+            this.bindViewportPositioning();
+        }
+
         // Public instance for application debugging.
         window.devConsole = this;
 
@@ -408,7 +412,7 @@ export default class Console {
                 })
             );
         });
-/*
+        /*
         this.toggleButton.addEventListener("click", () => {
             const collapsed = this.element.classList.toggle("collapsed");
 
@@ -416,23 +420,12 @@ export default class Console {
         });
 
 */
-this.toggleButton.addEventListener("click", () => {
-    const collapsed = this.element.classList.toggle("collapsed");
-
-    this.updateToggleButton(collapsed);
-
-    // Request a repaint after the layout change.
-    requestAnimationFrame(() => {
-        this.element.style.visibility = "hidden";
-
-        requestAnimationFrame(() => {
-            this.element.style.visibility = "visible";
+        this.toggleButton.addEventListener("click", () => {
+            const collapsed = this.element.classList.toggle("collapsed");
+            this.updateToggleButton(collapsed);
+            this.refreshViewportPosition();
         });
-    });
-});
 
-
-        
         this.bindTabs();
         this.bindSettings();
         this.bindDragging();
@@ -511,9 +504,11 @@ this.toggleButton.addEventListener("click", () => {
                 this.logElement.classList.toggle("hide-copy-buttons", !value);
                 break;
 
+            case "allowDragOutsideBounds":
+                this.refreshViewportPosition();
+                break;
+
             // mirrorToNative is read for every captured message.
-            // allowDragOutsideBounds is read during every drag movement.
-            // Both therefore take effect immediately.
         }
     }
 
@@ -563,23 +558,23 @@ this.toggleButton.addEventListener("click", () => {
     bindDragging() {
         this.isDocked = true;
         this.isDragging = false;
-
         this.dragOffsetX = 0;
         this.dragOffsetY = 0;
 
         const onPointerDown = event => {
             if (
                 this.settings.mode === "embedded" ||
-                this.isDocked ||
                 (event.button !== 0 && event.pointerType === "mouse")
             ) {
                 return;
             }
 
+            // Start dragging from the first press, including when docked.
+            // This avoids requiring a separate tap to unlock the console.
+            if (this.isDocked) this.undock();
             this.isDragging = true;
 
             const rect = this.element.getBoundingClientRect();
-
             this.dragOffsetX = event.clientX - rect.left;
             this.dragOffsetY = event.clientY - rect.top;
 
@@ -595,23 +590,38 @@ this.toggleButton.addEventListener("click", () => {
         const onPointerMove = event => {
             if (!this.isDragging || this.isDocked) return;
 
-            let x = event.clientX - this.dragOffsetX;
-            let y = event.clientY - this.dragOffsetY;
+            const viewport = this.getViewportMetrics();
+            const rect = this.element.getBoundingClientRect();
+            let x = event.clientX - this.dragOffsetX - viewport.offsetLeft;
+            let y = event.clientY - this.dragOffsetY - viewport.offsetTop;
+            const width = rect.width || viewport.width;
+            const height = rect.height || 44;
+            const visibleStrip = Math.min(48, width, height);
 
-            if (!this.settings.allowDragOutsideBounds) {
-                const rect = this.element.getBoundingClientRect();
-                const maxX = Math.max(0, window.innerWidth - rect.width);
-                const maxY = Math.max(0, window.innerHeight - rect.height);
-
-                x = Math.min(maxX, Math.max(0, x));
-                y = Math.min(maxY, Math.max(0, y));
+            if (this.settings.allowDragOutsideBounds) {
+                // Allow most of the console to sit outside the viewport, but
+                // always leave a usable strip on-screen so it can be recovered.
+                x = Math.min(
+                    viewport.width - visibleStrip,
+                    Math.max(visibleStrip - width, x)
+                );
+                y = Math.min(
+                    viewport.height - visibleStrip,
+                    Math.max(visibleStrip - height, y)
+                );
+            } else {
+                x = Math.min(
+                    Math.max(0, viewport.width - width),
+                    Math.max(0, x)
+                );
+                y = Math.min(
+                    Math.max(0, viewport.height - height),
+                    Math.max(0, y)
+                );
             }
 
-            this.element.style.left = `${x}px`;
-            this.element.style.top = `${y}px`;
-            this.element.style.right = "auto";
-            this.element.style.bottom = "auto";
-
+            this.viewportPosition = { x, y };
+            this.applyViewportPosition();
             event.preventDefault();
         };
 
@@ -620,7 +630,9 @@ this.toggleButton.addEventListener("click", () => {
         };
 
         this.dragHandle.addEventListener("pointerdown", onPointerDown);
-        document.addEventListener("pointermove", onPointerMove);
+        document.addEventListener("pointermove", onPointerMove, {
+            passive: false
+        });
         document.addEventListener("pointerup", stopDragging);
         document.addEventListener("pointercancel", stopDragging);
 
@@ -632,35 +644,136 @@ this.toggleButton.addEventListener("click", () => {
         });
     }
 
-    undock() {
-        if (!this.isDocked) {
-            return;
-        }
+    getViewportMetrics() {
+        const viewport = window.visualViewport;
+        return {
+            offsetLeft: viewport?.offsetLeft ?? 0,
+            offsetTop: viewport?.offsetTop ?? 0,
+            width: Math.max(1, viewport?.width ?? window.innerWidth),
+            height: Math.max(1, viewport?.height ?? window.innerHeight)
+        };
+    }
 
+    bindViewportPositioning() {
+        this.viewportPosition = { x: 0, y: 0 };
+        this.viewportPositionFrame = 0;
+
+        const refresh = () => {
+            if (this.viewportPositionFrame) return;
+            this.viewportPositionFrame = requestAnimationFrame(() => {
+                this.viewportPositionFrame = 0;
+                this.refreshViewportPosition();
+            });
+        };
+
+        const viewport = window.visualViewport;
+        viewport?.addEventListener("resize", refresh);
+        viewport?.addEventListener("scroll", refresh);
+        window.addEventListener("resize", refresh);
+        window.addEventListener("orientationchange", refresh);
+
+        this.cleanupCallbacks.push(() => {
+            viewport?.removeEventListener("resize", refresh);
+            viewport?.removeEventListener("scroll", refresh);
+            window.removeEventListener("resize", refresh);
+            window.removeEventListener("orientationchange", refresh);
+            if (this.viewportPositionFrame) {
+                cancelAnimationFrame(this.viewportPositionFrame);
+                this.viewportPositionFrame = 0;
+            }
+        });
+
+        // Wait one frame so the console has its final initial dimensions.
+        refresh();
+    }
+
+    refreshViewportPosition() {
+        if (this.settings.mode !== "overlay" || !this.element.isConnected)
+            return;
+        const viewport = this.getViewportMetrics();
         const rect = this.element.getBoundingClientRect();
 
-        this.element.style.left = `${rect.left}px`;
-        this.element.style.top = `${rect.top}px`;
+        if (this.isDocked) {
+            this.viewportPosition = {
+                x: 0,
+                y: Math.max(0, viewport.height - rect.height)
+            };
+        } else {
+            this.constrainViewportPosition(viewport, rect);
+        }
+
+        this.applyViewportPosition();
+    }
+
+    constrainViewportPosition(
+        viewport = this.getViewportMetrics(),
+        rect = this.element.getBoundingClientRect()
+    ) {
+        const width = rect.width || viewport.width;
+        const height = rect.height || 44;
+        const visibleStrip = Math.min(48, width, height);
+        let { x, y } = this.viewportPosition ?? { x: 0, y: 0 };
+
+        if (this.settings.allowDragOutsideBounds) {
+            x = Math.min(
+                viewport.width - visibleStrip,
+                Math.max(visibleStrip - width, x)
+            );
+            y = Math.min(
+                viewport.height - visibleStrip,
+                Math.max(visibleStrip - height, y)
+            );
+        } else {
+            x = Math.min(Math.max(0, viewport.width - width), Math.max(0, x));
+            y = Math.min(Math.max(0, viewport.height - height), Math.max(0, y));
+        }
+
+        this.viewportPosition = { x, y };
+    }
+
+    applyViewportPosition() {
+        if (this.settings.mode !== "overlay" || !this.element.isConnected)
+            return;
+        const viewport = this.getViewportMetrics();
+        const rect = this.element.getBoundingClientRect();
+
+        if (this.isDocked) {
+            this.viewportPosition.x = 0;
+            this.viewportPosition.y = Math.max(
+                0,
+                viewport.height - rect.height
+            );
+        } else {
+            this.constrainViewportPosition(viewport, rect);
+        }
+
+        this.element.style.left = `${viewport.offsetLeft + this.viewportPosition.x}px`;
+        this.element.style.top = `${viewport.offsetTop + this.viewportPosition.y}px`;
         this.element.style.right = "auto";
         this.element.style.bottom = "auto";
+        this.element.style.width = `${viewport.width}px`;
+        this.element.style.maxHeight = `${viewport.height}px`;
+    }
 
+    undock() {
+        if (!this.isDocked) return;
+
+        const viewport = this.getViewportMetrics();
+        const rect = this.element.getBoundingClientRect();
+        this.viewportPosition = {
+            x: rect.left - viewport.offsetLeft,
+            y: rect.top - viewport.offsetTop
+        };
         this.isDocked = false;
+        this.applyViewportPosition();
         this.updatePositionButton();
     }
 
     dock() {
-        if (this.isDocked) {
-            return;
-        }
-
+        if (this.isDocked) return;
         this.isDragging = false;
         this.isDocked = true;
-
-        this.element.style.left = "0px";
-        this.element.style.top = "auto";
-        this.element.style.right = "0px";
-        this.element.style.bottom = "0px";
-
+        this.applyViewportPosition();
         this.updatePositionButton();
     }
 

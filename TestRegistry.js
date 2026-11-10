@@ -169,7 +169,7 @@ export default class TestRegistry {
                 if (!button.isConnected) return;
                 button.textContent = originalLabel;
                 button.disabled = false;
-            }, 1200);
+            }, 200);
         }
     }
 

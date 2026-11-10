@@ -243,7 +243,7 @@ try {
 
 The bootstrap complements this startup error handling; it does not guarantee that every possible browser, WebView, or module-loading failure can be intercepted.
 
-## Development roadmap
+## Development roadmap*
 
 ### Short term — v1.0.2
 
@@ -251,16 +251,20 @@ The bootstrap complements this startup error handling; it does not guarantee tha
 * Continue improving inspector toggling and overlay behavior.
 * Refine viewport-aware positioning and mobile interaction.
 
-### Long term*
+### Long term
 
 * Execute reusable console command scripts.
 * Improve WebView integration.
 
-<sub>\* Long term items are planned work and may change as development progresses.</sub>
+<sub>\* Development roadmap includes planned work only and may change as development progresses.</sub>
 
 ## Version history
 
 ### v1.0.2 — In progress
+
+- Viewport improvements added.
+- A page with no #devtools element now works in both modes. Embedded mode creates and later removes its own container.
+- Everything a mode adds to the page is registered on a cleanup scope. The scope unwinds in reverse order, and one failing step doesn't block the rest.
 
 ### v1.0.1
 
@@ -277,11 +281,5 @@ The bootstrap complements this startup error handling; it does not guarantee tha
 ## Project
 
 **Repository:** [Twaddler01/mobile-dev-console](https://github.com/Twaddler01/mobile-dev-console)
-
-**Release example page** [GitHub Pages index.html](https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/)
-
-**Bootstrap CDN Link** [https://twaddler01.github.io/mobile-dev-console/releases/v1.0.1/errorBootstrap.js](https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/errorBootstrap.js)
-
-**DevTools CDN Link** [https://twaddler01.github.io/mobile-dev-console/releases/v1.0.1/DevTools.js](https://twaddler01.github.io/mobile-dev-console/releases/v1.0.0/DevTools.js)
 
 Contributions, bug reports, and suggestions for improving mobile debugging workflows are welcome.

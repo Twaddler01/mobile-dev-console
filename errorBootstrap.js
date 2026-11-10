@@ -42,8 +42,12 @@
             position: "fixed",
             top: "10px",
             left: "10px",
-            right: "10px",
+            right: "auto",
+
+            width: "fit-content",
+            maxWidth: "calc(100vw - 20px)",
             maxHeight: "70vh",
+
             overflow: "auto",
             padding: "12px",
             background: "#300",
